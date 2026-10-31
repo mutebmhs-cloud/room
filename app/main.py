@@ -76,6 +76,8 @@ async def protect(request, call_next):
 app.mount('/static',StaticFiles(directory=ROOT/'static'),name='static')
 @app.get('/')
 def index(): return FileResponse(ROOT/'static'/'index.html')
+@app.head('/')
+def head_index(): return Response(status_code=200)
 @app.get('/robots.txt')
 def robots(): return PlainTextResponse('User-agent: *\nDisallow: /\n')
 @app.get('/health')
@@ -188,6 +190,7 @@ def list_projects(user:User=Depends(auth),db:OrmSession=Depends(get_db)):
 
 @app.post('/api/projects')
 def create_project(data:CreateProject,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
+    if not data.title.strip(): raise HTTPException(422,'اسم العمل لا يمكن أن يكون فارغًا')
     p=Project(user_id=user.id,title=data.title.strip(),kind=data.kind,structure='{}',checkpoint='{}'); db.add(p); db.commit(); return proj_json(p)
 
 @app.get('/api/projects/{pid}')
@@ -198,7 +201,7 @@ def get_project(pid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     return {'project':proj_json(p),'sections':[sec_json(s) for s in sec], 'facts':[fact_json(f,sec_versions) for f in db.scalars(select(Fact).where(Fact.project_id==pid).order_by(Fact.id))]}
 
 class UpdateProject(BaseModel):
-    version:int=Field(ge=1)
+    version:int=Field(ge=1,le=9223372036854775806)
     title:str=Field(min_length=1,max_length=240)
     premise:str=Field(max_length=12000)
     structure:dict=Field(default_factory=dict)
@@ -208,6 +211,7 @@ class UpdateProject(BaseModel):
 @app.put('/api/projects/{pid}')
 def update_project(pid:int,data:UpdateProject,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     owned_project(db,user,pid)
+    if not data.title.strip(): raise HTTPException(422,'اسم العمل لا يمكن أن يكون فارغًا')
     if len(json.dumps(data.structure,ensure_ascii=False))>50000 or len(json.dumps(data.checkpoint,ensure_ascii=False))>16000: raise HTTPException(413,'البيانات المنظمة طويلة')
     other_bytes=sum(len(s.body.encode('utf-8'))+len(s.blocks.encode('utf-8')) for s in db.scalars(select(Section).where(Section.project_id==pid)))
     if other_bytes+len(data.scratchpad.encode('utf-8'))>25_000_000: raise HTTPException(413,'العمل يتجاوز سعة الاختبار، صدّر نسخة احتياطية')
@@ -227,6 +231,7 @@ def create_section(pid:int,data:SectionCreate,user:User=Depends(auth),db:OrmSess
     owned_project(db,user,pid)
     count=db.scalar(select(func.count(Section.id)).where(Section.project_id==pid))
     if count>=400: raise HTTPException(422,'وصلت إلى الحد المسموح للمقاطع')
+    if not data.title.strip(): raise HTTPException(422,'اسم المقطع لا يمكن أن يكون فارغًا')
     s=Section(project_id=pid,title=data.title.strip(),position=count,blocks='[]'); db.add(s); db.commit(); return sec_json(s)
 
 class SectionUpdate(BaseModel):
@@ -236,12 +241,14 @@ class SectionUpdate(BaseModel):
     blocks:list=Field(default_factory=list,max_length=900)
 
 def validate_blocks(blocks):
+    if len(blocks)>900: raise HTTPException(422,'عدد عناصر المشهد يتجاوز الحد المسموح')
     for b in blocks:
         if not isinstance(b,dict) or b.get('type') not in BLOCK_TYPES or not isinstance(b.get('text'),str) or len(b['text'])>15000: raise HTTPException(422,'عنصر السيناريو غير صالح')
 
 @app.put('/api/projects/{pid}/sections/{sid}')
 def update_section(pid:int,sid:int,data:SectionUpdate,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     old=owned_section(db,user,pid,sid); validate_blocks(data.blocks)
+    if not data.title.strip(): raise HTTPException(422,'اسم المقطع لا يمكن أن يكون فارغًا')
     if old.version!=data.version: raise HTTPException(409,'تعديل أحدث موجود؛ لن نكتب فوقه')
     other_bytes=sum(len(s.body.encode('utf-8'))+len(s.blocks.encode('utf-8')) for s in db.scalars(select(Section).where(Section.project_id==pid,Section.id!=sid)))
     project=db.get(Project,pid)
@@ -261,8 +268,8 @@ def revisions(pid:int,sid:int,user:User=Depends(auth),db:OrmSession=Depends(get_
     return [{'version':r.version,'title':r.title,'created_at':r.created_at.isoformat()} for r in db.scalars(select(Revision).where(Revision.section_id==sid).order_by(Revision.version.desc()).limit(100))]
 
 class Restore(BaseModel):
-    current_version:int=Field(ge=1)
-    target_version:int=Field(ge=1)
+    current_version:int=Field(ge=1,le=9223372036854775806)
+    target_version:int=Field(ge=1,le=9223372036854775806)
 
 @app.post('/api/projects/{pid}/sections/{sid}/restore')
 def restore(pid:int,sid:int,data:Restore,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
@@ -289,6 +296,7 @@ class FactCreate(BaseModel):
 @app.post('/api/projects/{pid}/facts')
 def add_fact(pid:int,data:FactCreate,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     owned_project(db,user,pid)
+    if data.section_id is not None: owned_section(db,user,pid,data.section_id)
     status='manual'; source_version=None
     if data.evidence:
         if data.section_id is None: raise HTTPException(422,'حدد المقطع الداعم للشاهد')
@@ -353,7 +361,7 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
     raw=request.data
     if raw.get('format')!='writer-cloud-v1' or not isinstance(raw.get('project'),dict) or not isinstance(raw.get('sections'),list) or not isinstance(raw.get('facts'),list): raise HTTPException(422,'صيغة النسخة الاحتياطية غير صالحة')
     proj=raw['project']; kind=proj.get('kind')
-    if kind not in KINDS or not isinstance(proj.get('title'),str) or not (1<=len(proj['title'])<=240) or len(raw['sections'])>400 or len(raw['facts'])>3000: raise HTTPException(422,'بيانات المشروع غير صالحة')
+    if kind not in KINDS or not isinstance(proj.get('title'),str) or not (1<=len(proj['title'])<=240) or not proj['title'].strip() or len(raw['sections'])>400 or len(raw['facts'])>3000: raise HTTPException(422,'بيانات المشروع غير صالحة')
     if (not isinstance(proj.get('premise',''),str) or len(proj.get('premise',''))>12000 or
         not isinstance(proj.get('scratchpad',''),str) or len(proj.get('scratchpad',''))>200000 or
         not isinstance(proj.get('structure',{}),dict) or not isinstance(proj.get('checkpoint',{}),dict)):
@@ -363,7 +371,7 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
     try:
         validated=[]
         for sec in raw['sections']:
-            if not isinstance(sec,dict) or not isinstance(sec.get('title'),str) or not (1<=len(sec['title'])<=240) or not isinstance(sec.get('body'),str) or len(sec['body'])>450000 or not isinstance(sec.get('blocks'),list): raise ValueError()
+            if not isinstance(sec,dict) or not isinstance(sec.get('title'),str) or not (1<=len(sec['title'])<=240) or not sec['title'].strip() or not isinstance(sec.get('body'),str) or len(sec['body'])>450000 or not isinstance(sec.get('blocks'),list): raise ValueError()
             validate_blocks(sec['blocks']); validated.append(sec)
         source_ids=[sec.get('id') for sec in validated]
         if any(((not isinstance(x,(int,str))) or isinstance(x,bool) or (isinstance(x,int) and x<1) or (isinstance(x,str) and (not x.strip() or len(x)>120))) for x in source_ids) or len(source_ids)!=len(set((type(x).__name__,x) for x in source_ids)):
@@ -416,6 +424,9 @@ def import_fountain(pid:int,data:FountainUpload,user:User=Depends(auth),db:OrmSe
     total=sum(len(v.body.encode())+len(v.blocks.encode()) for v in existing)+len(p.scratchpad.encode())
     total+=sum(len(json.dumps(s['blocks'],ensure_ascii=False).encode()) for s in scenes)
     if total>25_000_000: raise HTTPException(413,'السيناريو يتجاوز حد الحجم')
+    for scene in scenes:
+        if not scene['title'].strip(): raise HTTPException(422,'عنوان المشهد غير صالح')
+        validate_blocks(scene['blocks'])
     position=max([v.position for v in existing]+[-1])+1
     for i,sc in enumerate(scenes):
         db.add(Section(project_id=pid,title=sc['title'],body='',blocks=json.dumps(sc['blocks'],ensure_ascii=False),position=position+i))
