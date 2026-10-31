@@ -22,7 +22,9 @@ BLOCK_TYPES={'heading','action','character','dialogue','parenthetical','transiti
 ROOT=Path(__file__).parent
 @asynccontextmanager
 async def lifespan(app):
+    from .pilot import bootstrap_pilot
     Base.metadata.create_all(bind=engine)
+    bootstrap_pilot()
     bootstrap = os.getenv("BOOTSTRAP_INVITE", "").strip()
     if os.getenv("PILOT_EPHEMERAL") == "1" and not bootstrap:
         bootstrap = secrets.token_urlsafe(36)
@@ -78,12 +80,14 @@ app.mount('/static',StaticFiles(directory=ROOT/'static'),name='static')
 def index(): return FileResponse(ROOT/'static'/'index.html')
 @app.head('/')
 def head_index(): return Response(status_code=200)
+@app.get('/admin')
+def admin_page(): return FileResponse(ROOT/'static'/'admin.html')
 @app.get('/robots.txt')
 def robots(): return PlainTextResponse('User-agent: *\nDisallow: /\n')
 @app.get('/health')
 def health(db:OrmSession=Depends(get_db)):
     db.execute(text('SELECT 1'))
-    return {'status':'ok','ai_configured':bool(os.getenv('OPENAI_API_KEY')), 'ephemeral':os.getenv('PILOT_EPHEMERAL')=='1'}
+    return {'status':'ok','ai_configured':bool(os.getenv('OPENAI_API_KEY')) and os.getenv('PILOT_EPHEMERAL')!='1', 'ephemeral':engine.dialect.name=='sqlite','durable_storage':engine.dialect.name=='postgresql','pilot_invites':os.getenv('PILOT_INVITE_MODE')=='1'}
 
 _attempts={}
 def throttle(key, limit=9, window=900):
@@ -98,6 +102,10 @@ def auth(request:Request,db:OrmSession=Depends(get_db)):
     if not sess or sess.expires_at.replace(tzinfo=timezone.utc)<=now(): raise HTTPException(401,'انتهت الجلسة')
     user=db.get(User,sess.user_id)
     if not user: raise HTTPException(401,'يرجى تسجيل الدخول')
+    if os.getenv('PILOT_INVITE_MODE')=='1':
+        from .pilot import pilot_entry
+        entry=pilot_entry(db,user)
+        if not entry or not entry.enabled: raise HTTPException(401,'الدعوة غير مفعّلة')
     if request.method in ('POST','PUT','PATCH','DELETE'): require_csrf(request,sess)
     return user
 
@@ -147,6 +155,7 @@ def login_session(db,user,response):
 
 @app.post('/api/auth/register')
 def register(data:Register,request:Request,response:Response,db:OrmSession=Depends(get_db)):
+    if os.getenv('PILOT_INVITE_MODE')=='1': raise HTTPException(403,'التسجيل التجريبي عبر دعوة يصدرها المدير فقط')
     throttle('register:'+request.client.host,limit=12)
     email=normalize_email(data.email)
     if not pw_valid(data.password): raise HTTPException(422,'كلمة المرور يجب ألا تقل عن 12 حرفًا')
@@ -167,6 +176,7 @@ def register(data:Register,request:Request,response:Response,db:OrmSession=Depen
 
 @app.post('/api/auth/login')
 def login(data:Login,request:Request,response:Response,db:OrmSession=Depends(get_db)):
+    if os.getenv('PILOT_INVITE_MODE')=='1': raise HTTPException(403,'ادخل باسم المستخدم ورمز الدعوة')
     email=normalize_email(data.email)
     throttle('login:'+request.client.host+':'+email,limit=8)
     user=db.scalar(select(User).where(User.email==email))
@@ -180,6 +190,7 @@ class RecoverAccount(BaseModel):
 
 @app.post('/api/auth/recover')
 def recover_account(data:RecoverAccount,request:Request,db:OrmSession=Depends(get_db)):
+    if os.getenv('PILOT_INVITE_MODE')=='1': raise HTTPException(403,'أدر رمز الدخول عبر مدير الدعوات')
     email=normalize_email(data.email)
     throttle('recovery:'+request.client.host+':'+email,limit=5,window=3600)
     if not pw_valid(data.new_password): raise HTTPException(422,'كلمة المرور يجب ألا تقل عن 12 حرفًا')
@@ -201,7 +212,9 @@ def me(request:Request,db:OrmSession=Depends(get_db)):
     sess=db.scalar(select(LoginSession).where(LoginSession.token_hash==digest(request.cookies.get(COOKIE_NAME,''))))
     # Deterministic session-bound CSRF token remains valid across refreshes/tabs.
     csrf=csrf_for_session(request.cookies.get(COOKIE_NAME,''))
-    return {'email':user.email,'csrf':csrf,'ai_available':bool(os.getenv('OPENAI_API_KEY'))}
+    from .pilot import pilot_entry
+    entry=pilot_entry(db,user)
+    return {'email':user.email,'username':entry.username if entry else None,'role':entry.role if entry else 'writer', 'pilot':bool(entry), 'csrf':csrf,'ai_available':bool(os.getenv('OPENAI_API_KEY')) and os.getenv('PILOT_EPHEMERAL')!='1'}
 
 @app.post('/api/auth/logout')
 def logout(request:Request,response:Response,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
@@ -521,7 +534,11 @@ class DeleteAccount(BaseModel):
 
 @app.post('/api/account/delete')
 def delete_account(data:DeleteAccount,user:User=Depends(auth),db:OrmSession=Depends(get_db),response:Response=None):
+    if os.getenv('PILOT_INVITE_MODE')=='1': raise HTTPException(403,'المدير يتحكم في الدعوات خلال التجربة')
     if not verify(data.password,user.password_hash): raise HTTPException(403,'كلمة المرور غير صحيحة')
     db.delete(user); db.commit();
     if response is not None: response.delete_cookie(COOKIE_NAME,path='/')
     return {'ok':True}
+
+from .pilot import router as pilot_router
+app.include_router(pilot_router)
