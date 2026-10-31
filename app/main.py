@@ -12,7 +12,7 @@ from sqlalchemy import select, update, delete, func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
 from .db import Base, engine, get_db, SessionLocal
-from .models import User, Invite, Session as LoginSession, Project, Section, Revision, Fact, Chat, now
+from .models import User, Invite, RecoveryCode, Session as LoginSession, Project, Section, Revision, Fact, Chat, now
 from .security import hash_password, digest, secure_random, pw_valid, verify, require_csrf, COOKIE_NAME, SESSION_DAYS, IS_PROD, csrf_for_session
 from .ai import analyze
 from .fountain import parse as parse_fountain, FountainError
@@ -152,12 +152,16 @@ def register(data:Register,request:Request,response:Response,db:OrmSession=Depen
     if not invite: raise HTTPException(403,'رمز الدعوة غير صالح أو مستخدم')
     if db.scalar(select(User).where(User.email==email)): raise HTTPException(409,'البريد مستخدم')
     user=User(email=email,password_hash=hash_password.hash(data.password)); db.add(user); db.flush()
+    recovery_code=secure_random()
+    db.add(RecoveryCode(user_id=user.id,code_hash=digest(recovery_code)))
     claimed=db.execute(update(Invite).where(Invite.id==invite.id, Invite.used_by.is_(None)).values(used_by=user.id))
     if claimed.rowcount!=1: db.rollback(); raise HTTPException(409,'تم استخدام رمز الدعوة')
     try: db.commit()
     except IntegrityError:
         db.rollback(); raise HTTPException(409,'تم استخدام الدعوة أو البريد')
-    return login_session(db,user,response)
+    session=login_session(db,user,response)
+    session['recovery_code']=recovery_code
+    return session
 
 @app.post('/api/auth/login')
 def login(data:Login,request:Request,response:Response,db:OrmSession=Depends(get_db)):
@@ -166,6 +170,29 @@ def login(data:Login,request:Request,response:Response,db:OrmSession=Depends(get
     user=db.scalar(select(User).where(User.email==email))
     if not user or not verify(data.password,user.password_hash): raise HTTPException(401,'بيانات الدخول غير صحيحة')
     return login_session(db,user,response)
+
+class RecoverAccount(BaseModel):
+    email:str=Field(min_length=5,max_length=250)
+    code:str=Field(min_length=32,max_length=160)
+    new_password:str=Field(min_length=12,max_length=128)
+
+@app.post('/api/auth/recover')
+def recover_account(data:RecoverAccount,request:Request,db:OrmSession=Depends(get_db)):
+    email=normalize_email(data.email)
+    throttle('recovery:'+request.client.host+':'+email,limit=5,window=3600)
+    if not pw_valid(data.new_password): raise HTTPException(422,'كلمة المرور يجب ألا تقل عن 12 حرفًا')
+    user=db.scalar(select(User).where(User.email==email))
+    rec=db.scalar(select(RecoveryCode).where(RecoveryCode.user_id==user.id)) if user else None
+    if not rec or not secrets.compare_digest(rec.code_hash,digest(data.code)):
+        raise HTTPException(403,'البريد أو رمز الاستعادة غير صحيح')
+    user.password_hash=hash_password.hash(data.new_password)
+    rec.code_hash=digest(secure_random())
+    new_code=secure_random()
+    rec.code_hash=digest(new_code)
+    rec.created_at=now()
+    db.execute(delete(LoginSession).where(LoginSession.user_id==user.id))
+    db.commit()
+    return {'ok':True,'recovery_code':new_code}
 
 @app.get('/api/auth/me')
 def me(request:Request,db:OrmSession=Depends(get_db)):
