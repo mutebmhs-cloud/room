@@ -17,7 +17,7 @@ def verify(password, hashed):
 SESSION_DAYS=7
 COOKIE_NAME='writer_session'
 IS_PROD=os.getenv('APP_ENV','development')=='production'
-APP_SECRET=os.getenv('APP_SECRET','development-only-not-for-production')
+APP_SECRET=os.getenv('APP_SECRET') or (secrets.token_urlsafe(48) if os.getenv('PILOT_EPHEMERAL') == '1' else 'development-only-not-for-production')
 if IS_PROD and len(APP_SECRET)<32: raise RuntimeError('APP_SECRET must contain at least 32 characters in production')
 def csrf_for_session(token): return hmac.new(APP_SECRET.encode(),token.encode(),hashlib.sha256).hexdigest()
 
