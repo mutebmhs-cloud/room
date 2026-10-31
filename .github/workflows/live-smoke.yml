@@ -18,7 +18,7 @@ jobs:
           python - <<'PY'
           import urllib.request, urllib.error, os, json, time, sys
           root=os.environ['ROOT']
-          paths=[('/',200),('/health',200),('/static/app.js',200),('/static/style.css',200),('/api/auth/me',401),('/api/projects',401),('/api/not-found-path',404)]
+          paths=[('/',200),('/health',200),('/static/app.js',200),('/static/style.css',200),('/api/auth/me',401),('/api/projects',401),('/api/not-found-path',404),('/admin',200),('/static/admin.js',200),('/api/pilot/status',200),('/api/pilot/admin/writers',401)]
           failures=[]
           for path,expected in paths:
               last=None
@@ -38,6 +38,12 @@ jobs:
               code,body=last
               print(f'{path}: {code} expected {expected}; bytes {len(body)}',flush=True)
               if code!=expected: failures.append((path,code,expected))
+              if path=='/api/pilot/status' and code==200:
+                  try:
+                      config=json.loads(body)
+                      print('PILOT_CHECK:',{k:config.get(k) for k in ('invite_mode','durable_storage','ai_ready')})
+                      if config.get('invite_mode') is not True:failures.append(('invite_mode',False,True))
+                  except Exception:failures.append(('pilot-status-json',code,'json'))
               if path=='/health' and code==200:
                   try:
                       data=json.loads(body)
