@@ -1,0 +1,37 @@
+name: Unpack verified writer application
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  unpack:
+    if: "!contains(github.event.head_commit.message, '[skip bootstrap]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Verify uploaded archive integrity
+        run: |
+          echo "9c9dbbd409efc637d2dc950377094361543c36b2  85B3A7ADA9_A78483A7AAA8_858481A7AA_85B3AA88AFB9_A78486B4B1.zip" | git hash-object --stdin >/dev/null
+          test "$(git hash-object 85B3A7ADA9_A78483A7AAA8_858481A7AA_85B3AA88AFB9_A78486B4B1.zip)" = "9c9dbbd409efc637d2dc950377094361543c36b2"
+      - name: Unpack source files
+        run: |
+          unzip -oq 85B3A7ADA9_A78483A7AAA8_858481A7AA_85B3AA88AFB9_A78486B4B1.zip
+          test -f app/main.py && test -f app/ai.py && test -f Dockerfile && test -f requirements.txt && test -f render.yaml
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Verify application before commit
+        run: python -m pytest -q tests/test_acceptance.py tests/test_extended.py tests/test_publish_regression.py
+      - name: Commit extracted source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -m "Extract tested writer-space application [skip bootstrap]"
+          git push
