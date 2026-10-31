@@ -1,8 +1,9 @@
-# TEST DATA ONLY: Render free PostgreSQL expires after 30 days and has no managed backups.
-# Upgrade the database to a paid plan and verify backup restoration before real manuscripts.
+# Existing Render resources: writer-space-pilot-room + writer-space-pilot-db
+# A Blueprint sync is required for fromDatabase to populate DATABASE_URL.
+# Free PostgreSQL expires on 2026-11-30; no managed backups.
 services:
   - type: web
-    name: writer-space-pilot
+    name: writer-space-pilot-room
     runtime: docker
     plan: free
     region: frankfurt
@@ -10,6 +11,12 @@ services:
     envVars:
       - key: APP_ENV
         value: production
+      - key: PILOT_INVITE_MODE
+        value: "1"
+      - key: PILOT_EPHEMERAL
+        value: "0"
+      - key: APP_ALLOWED_HOSTS
+        value: writer-space-pilot-room.onrender.com
       - key: APP_SECRET
         generateValue: true
       - key: DATABASE_URL
@@ -18,11 +25,11 @@ services:
           property: connectionString
       - key: OPENAI_MODEL
         value: gpt-4.1-mini
-
 databases:
   - name: writer-space-pilot-db
     plan: free
     region: frankfurt
-    databaseName: writer_space_pilot
-    user: writer_space_pilot
+    postgresMajorVersion: "18"
+    databaseName: writer_space_pilot_db
+    user: writer_space_pilot_db_user
     ipAllowList: []
