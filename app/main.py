@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import select, update, delete, func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
-from .db import Base, engine, get_db
+from .db import Base, engine, get_db, SessionLocal
 from .models import User, Invite, Session as LoginSession, Project, Section, Revision, Fact, Chat, now
 from .security import hash_password, digest, secure_random, pw_valid, verify, require_csrf, COOKIE_NAME, SESSION_DAYS, IS_PROD, csrf_for_session
 from .ai import analyze
@@ -23,6 +23,14 @@ ROOT=Path(__file__).parent
 @asynccontextmanager
 async def lifespan(app):
     Base.metadata.create_all(bind=engine)
+    bootstrap = os.getenv("BOOTSTRAP_INVITE", "").strip()
+    if bootstrap:
+        if len(bootstrap) < 24:
+            raise RuntimeError("BOOTSTRAP_INVITE must be at least 24 characters")
+        with SessionLocal() as db:
+            if not db.scalar(select(Invite).where(Invite.token_hash == digest(bootstrap))):
+                db.add(Invite(token_hash=digest(bootstrap)))
+                db.commit()
     yield
 app=FastAPI(lifespan=lifespan,title='مساحة الكاتب',docs_url=None if IS_PROD else '/api/docs',redoc_url=None,openapi_url=None if IS_PROD else '/api/openapi.json')
 if IS_PROD:
@@ -31,7 +39,13 @@ if IS_PROD:
     render_host=os.getenv('RENDER_EXTERNAL_HOSTNAME','').strip()
     if render_host and render_host not in hosts: hosts.append(render_host)
     if not hosts or '*' in hosts: raise RuntimeError('APP_ALLOWED_HOSTS or RENDER_EXTERNAL_HOSTNAME must be configured for production')
-    if not os.getenv('DATABASE_URL','').startswith(('postgres://','postgresql://','postgresql+psycopg://')): raise RuntimeError('PostgreSQL is required for production')
+    pilot = os.getenv('PILOT_EPHEMERAL') == '1'
+    db_url = os.getenv('DATABASE_URL','')
+    if not db_url.startswith(('postgres://','postgresql://','postgresql+psycopg://')):
+        if not (pilot and db_url == 'sqlite:////tmp/writer-space-pilot.db'):
+            raise RuntimeError('PostgreSQL is required for production; explicit ephemeral pilot exception only')
+    if pilot and os.getenv('OPENAI_API_KEY'):
+        raise RuntimeError('AI cannot be enabled in ephemeral public pilot')
     app.add_middleware(TrustedHostMiddleware,allowed_hosts=hosts)
 
 @app.middleware('http')
@@ -64,7 +78,7 @@ def robots(): return PlainTextResponse('User-agent: *\nDisallow: /\n')
 @app.get('/health')
 def health(db:OrmSession=Depends(get_db)):
     db.execute(text('SELECT 1'))
-    return {'status':'ok','ai_configured':bool(os.getenv('OPENAI_API_KEY'))}
+    return {'status':'ok','ai_configured':bool(os.getenv('OPENAI_API_KEY')), 'ephemeral':os.getenv('PILOT_EPHEMERAL')=='1'}
 
 _attempts={}
 def throttle(key, limit=9, window=900):
