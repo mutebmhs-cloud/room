@@ -1,0 +1,50 @@
+name: Live synthetic smoke audit
+on:
+  push:
+    paths:
+      - '.github/workflows/live-smoke.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  external-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Probe public deployed service without real user data
+        env:
+          ROOT: https://writer-space-pilot-room.onrender.com
+        run: |
+          python - <<'PY'
+          import urllib.request, urllib.error, os, json, time, sys
+          root=os.environ['ROOT']
+          paths=[('/',200),('/health',200),('/static/app.js',200),('/static/style.css',200),('/api/auth/me',401),('/api/projects',401),('/api/not-found-path',404)]
+          failures=[]
+          for path,expected in paths:
+              last=None
+              for attempt in range(3):
+                  try:
+                      with urllib.request.urlopen(urllib.request.Request(root+path,headers={'User-Agent':'WriterSpace-Synthetic-Audit/1.0'}),timeout=65) as r:
+                          code=r.status
+                          body=r.read(10000)
+                  except urllib.error.HTTPError as e:
+                      code=e.code
+                      body=e.read(1000)
+                  except Exception as e:
+                      code='ERR'; body=str(e).encode()
+                  last=(code,body)
+                  if code!='ERR':break
+                  time.sleep(5)
+              code,body=last
+              print(f'{path}: {code} expected {expected}; bytes {len(body)}',flush=True)
+              if code!=expected: failures.append((path,code,expected))
+              if path=='/health' and code==200:
+                  try:
+                      data=json.loads(body)
+                      print('HEALTH_FIELDS:',{k:data.get(k) for k in ('status','ai_configured','ephemeral')},flush=True)
+                  except Exception:failures.append(('bad-health-body',code,'json'))
+              if path=='/' and code==200 and (b'html' not in body[:200].lower()):
+                  failures.append(('html-signature',code,'html'))
+          print('RESULT:', 'PASS' if not failures else 'FAIL',failures)
+          if failures: sys.exit(1)
+          PY
