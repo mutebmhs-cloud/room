@@ -350,7 +350,12 @@ async def chat(pid:int,data:ChatRequest,request:Request,user:User=Depends(auth),
 def export_project(pid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     p=owned_project(db,user,pid)
     sections=db.scalars(select(Section).where(Section.project_id==pid).order_by(Section.position,Section.id)).all()
-    return {'format':'writer-cloud-v1','project':{**proj_json(p),'kind':p.kind},'sections':[sec_json(x) for x in sections],'facts':[fact_json(x,{s.id:s.version for s in sections}) for x in db.scalars(select(Fact).where(Fact.project_id==pid))]}
+    return {'format':'writer-cloud-v2','project':{**proj_json(p),'kind':p.kind},
+            'sections':[sec_json(x) for x in sections],
+            'facts':[fact_json(x,{s.id:s.version for s in sections}) for x in db.scalars(select(Fact).where(Fact.project_id==pid))],
+            'revisions':[{'section_id':r.section_id,'version':r.version,'title':r.title,'body':r.body,'blocks':_json(r.blocks,[])}
+                         for r in db.scalars(select(Revision).where(Revision.section_id.in_([a.id for a in sections])).order_by(Revision.section_id,Revision.version))],
+            'chats':[{'role':x.role,'text':x.text,'proposals':_json(x.proposals,[])} for x in db.scalars(select(Chat).where(Chat.project_id==pid).order_by(Chat.id))]}
 
 class ImportData(BaseModel):
     model_config=ConfigDict(extra='forbid')
@@ -359,7 +364,12 @@ class ImportData(BaseModel):
 @app.post('/api/import')
 def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     raw=request.data
-    if raw.get('format')!='writer-cloud-v1' or not isinstance(raw.get('project'),dict) or not isinstance(raw.get('sections'),list) or not isinstance(raw.get('facts'),list): raise HTTPException(422,'صيغة النسخة الاحتياطية غير صالحة')
+    fmt=raw.get('format')
+    if fmt not in ('writer-cloud-v1','writer-cloud-v2') or not isinstance(raw.get('project'),dict) or not isinstance(raw.get('sections'),list) or not isinstance(raw.get('facts'),list): raise HTTPException(422,'صيغة النسخة الاحتياطية غير صالحة')
+    revs=raw.get('revisions',[]) if fmt=='writer-cloud-v2' else []
+    chats=raw.get('chats',[]) if fmt=='writer-cloud-v2' else []
+    if not isinstance(revs,list) or len(revs)>10000 or not isinstance(chats,list) or len(chats)>3000: raise HTTPException(422,'عدد سجلات النسخة الاحتياطية غير صالح')
+    if len(json.dumps(raw,ensure_ascii=False).encode('utf-8'))>30_000_000: raise HTTPException(413,'النسخة الاحتياطية كبيرة جدًا')
     proj=raw['project']; kind=proj.get('kind')
     if kind not in KINDS or not isinstance(proj.get('title'),str) or not (1<=len(proj['title'])<=240) or not proj['title'].strip() or len(raw['sections'])>400 or len(raw['facts'])>3000: raise HTTPException(422,'بيانات المشروع غير صالحة')
     if (not isinstance(proj.get('premise',''),str) or len(proj.get('premise',''))>12000 or
@@ -372,10 +382,23 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
         validated=[]
         for sec in raw['sections']:
             if not isinstance(sec,dict) or not isinstance(sec.get('title'),str) or not (1<=len(sec['title'])<=240) or not sec['title'].strip() or not isinstance(sec.get('body'),str) or len(sec['body'])>450000 or not isinstance(sec.get('blocks'),list): raise ValueError()
-            validate_blocks(sec['blocks']); validated.append(sec)
+            validate_blocks(sec['blocks'])
+            if fmt=='writer-cloud-v2' and (type(sec.get('version')) is not int or not 1<=sec['version']<=9223372036854775806): raise ValueError('section version')
+            validated.append(sec)
         source_ids=[sec.get('id') for sec in validated]
         if any(((not isinstance(x,(int,str))) or isinstance(x,bool) or (isinstance(x,int) and x<1) or (isinstance(x,str) and (not x.strip() or len(x)>120))) for x in source_ids) or len(source_ids)!=len(set((type(x).__name__,x) for x in source_ids)):
             raise ValueError('duplicate/invalid section identifiers')
+        version_map={sec['id']:sec['version'] if fmt=='writer-cloud-v2' else 1 for sec in validated}
+        checked_revisions=set()
+        for rev in revs:
+            if not isinstance(rev,dict) or rev.get('section_id') not in version_map or type(rev.get('version')) is not int or not 1<=rev['version']<version_map[rev['section_id']]: raise ValueError('revision reference')
+            identity=(rev['section_id'],rev['version'])
+            if identity in checked_revisions: raise ValueError('duplicate revision')
+            checked_revisions.add(identity)
+            if not isinstance(rev.get('title'),str) or not 1<=len(rev['title'])<=240 or not rev['title'].strip() or not isinstance(rev.get('body'),str) or len(rev['body'])>450000 or not isinstance(rev.get('blocks'),list): raise ValueError('revision')
+            validate_blocks(rev['blocks'])
+        for msg in chats:
+            if not isinstance(msg,dict) or msg.get('role') not in ('user','assistant') or not isinstance(msg.get('text'),str) or len(msg['text'])>6000 or not isinstance(msg.get('proposals'),list) or len(json.dumps(msg['proposals'],ensure_ascii=False))>12000: raise ValueError('chat')
         for f in raw['facts']:
             if not isinstance(f,dict) or not all(isinstance(f.get(k),str) for k in ['subject','predicate','value','evidence']): raise ValueError()
             if not (1<=len(f['subject'])<=200 and 1<=len(f['predicate'])<=200 and 1<=len(f['value'])<=500 and len(f['evidence'])<=2000): raise ValueError()
@@ -386,17 +409,23 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
         if cp_sid is not None and cp_sid not in source_ids:
             raise ValueError('dangling checkpoint source')
         total_bytes=len(proj.get('scratchpad','').encode())+sum(len(s['body'].encode())+len(json.dumps(s['blocks'],ensure_ascii=False).encode()) for s in validated)
+        total_bytes+=sum(len(r['body'].encode())+len(json.dumps(r['blocks'],ensure_ascii=False).encode()) for r in revs)
+        total_bytes+=sum(len(m['text'].encode())+len(json.dumps(m['proposals'],ensure_ascii=False).encode()) for m in chats)
         if total_bytes>25_000_000: raise ValueError()
         pp=Project(user_id=user.id,kind=kind,title=proj['title'],premise=proj.get('premise',''),scratchpad=proj.get('scratchpad',''),structure=json.dumps(proj.get('structure',{}),ensure_ascii=False),checkpoint=json.dumps(proj.get('checkpoint',{}),ensure_ascii=False))
         db.add(pp); db.flush(); old_map={}
         for i,sec in enumerate(validated):
-            new=Section(project_id=pp.id,title=sec['title'],body=sec['body'],blocks=json.dumps(sec['blocks'],ensure_ascii=False),position=i)
+            new=Section(project_id=pp.id,title=sec['title'].strip(),body=sec['body'],blocks=json.dumps(sec['blocks'],ensure_ascii=False),position=i,version=version_map[sec['id']])
             db.add(new); db.flush(); old_map[sec.get('id')]=new.id
         # Restore section references in checkpoint after remapping imported IDs.
         cp=proj.get('checkpoint',{}).copy()
         old_checkpoint_sid=cp.get('section_id')
         if old_checkpoint_sid is not None: cp['section_id']=old_map.get(old_checkpoint_sid)
         pp.checkpoint=json.dumps(cp,ensure_ascii=False)
+        for rev in revs:
+            db.add(Revision(section_id=old_map[rev['section_id']],version=rev['version'],title=rev['title'].strip(),body=rev['body'],blocks=json.dumps(rev['blocks'],ensure_ascii=False)))
+        for msg in chats:
+            db.add(Chat(project_id=pp.id,role=msg['role'],text=msg['text'],proposals=json.dumps(msg['proposals'],ensure_ascii=False)))
         for f in raw['facts']:
             sid=old_map.get(f.get('section_id'))
             ev=f['evidence'][:2000]; status='manual'
@@ -405,7 +434,7 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
                 if source and ev in (source['body']+'\n'+'\n'.join(x.get('text','') for x in source['blocks'])): status='literal_unverified_meaning'
                 else: ev=''
             else: ev=''
-            db.add(Fact(project_id=pp.id,subject=f['subject'],predicate=f['predicate'],value=f['value'],evidence=ev,section_id=sid,evidence_status=status,source_version=1 if status=='literal_unverified_meaning' else None))
+            db.add(Fact(project_id=pp.id,subject=f['subject'],predicate=f['predicate'],value=f['value'],evidence=ev,section_id=sid,evidence_status=status,source_version=version_map.get(f.get('section_id')) if status=='literal_unverified_meaning' else None))
         db.commit(); return {'id':pp.id}
     except (ValueError,TypeError,AttributeError):
         db.rollback(); raise HTTPException(422,'النسخة تحتوي بيانات غير سليمة')
