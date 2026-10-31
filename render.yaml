@@ -1,0 +1,28 @@
+# TEST DATA ONLY: Render free PostgreSQL expires after 30 days and has no managed backups.
+# Upgrade the database to a paid plan and verify backup restoration before real manuscripts.
+services:
+  - type: web
+    name: writer-space-pilot
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: writer-space-pilot-db
+          property: connectionString
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+
+databases:
+  - name: writer-space-pilot-db
+    plan: free
+    region: frankfurt
+    databaseName: writer_space_pilot
+    user: writer_space_pilot
+    ipAllowList: []
