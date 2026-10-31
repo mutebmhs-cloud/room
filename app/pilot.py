@@ -163,3 +163,34 @@ def my_review_log(user:User=Depends(core.auth),db:Session=Depends(get_db)):
     require_mode()
     results=db.scalars(select(AdminAccessLog).where(AdminAccessLog.writer_user_id==user.id).order_by(AdminAccessLog.id.desc()).limit(40)).all()
     return [{'action':v.action,'project_id':v.project_id,'viewed_at':v.viewed_at.isoformat()} for v in results]
+
+class PilotFeedback(Base):
+    __tablename__='pilot_feedback'
+    id=Column(Integer,primary_key=True)
+    writer_user_id=Column(Integer,ForeignKey('users.id',ondelete='CASCADE'),nullable=False,index=True)
+    subject=Column(String(140),nullable=False)
+    detail=Column(String(4000),nullable=False)
+    category=Column(String(24),nullable=False,default='bug')
+    created_at=Column(DateTime(timezone=True),default=now,nullable=False)
+
+class SubmitFeedback(BaseModel):
+    subject:str=Field(min_length=4,max_length=140)
+    detail:str=Field(min_length=10,max_length=4000)
+    category:str=Field(default='bug',pattern='^(bug|usability|idea)$')
+
+@router.post('/feedback')
+def submit_feedback(data:SubmitFeedback,user:User=Depends(core.auth),db:Session=Depends(get_db)):
+    require_mode()
+    entry=pilot_entry(db,user)
+    if not entry or entry.role!='writer':raise HTTPException(403,'للكاتب فقط')
+    if not data.subject.strip() or not data.detail.strip():raise HTTPException(422,'اذكر المشكلة وتفاصيلها')
+    db.add(PilotFeedback(writer_user_id=user.id,subject=data.subject.strip(),detail=data.detail.strip(),category=data.category))
+    db.commit()
+    return {'ok':True}
+
+@router.get('/admin/feedback')
+def review_feedback(user:User=Depends(core.auth),db:Session=Depends(get_db)):
+    require_admin(db,user)
+    rows=db.scalars(select(PilotFeedback).order_by(PilotFeedback.id.desc()).limit(200)).all()
+    usernames={r.user_id:r.username for r in db.scalars(select(PilotAccess).where(PilotAccess.role=='writer'))}
+    return [{'id':x.id,'username':usernames.get(x.writer_user_id,'writer'),'subject':x.subject,'detail':x.detail,'category':x.category,'created_at':x.created_at.isoformat()} for x in rows]
