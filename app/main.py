@@ -102,12 +102,14 @@ def auth(request:Request,db:OrmSession=Depends(get_db)):
     return user
 
 def owned_project(db,user,pid):
+    if not 1<=pid<=9223372036854775806: raise HTTPException(404,'العمل غير موجود')
     p=db.get(Project,pid)
     if not p or p.user_id!=user.id: raise HTTPException(404,'العمل غير موجود')
     return p
 
 def owned_section(db,user,pid,sid):
     owned_project(db,user,pid)
+    if not 1<=sid<=9223372036854775806: raise HTTPException(404,'المقطع غير موجود')
     sec=db.get(Section,sid)
     if not sec or sec.project_id!=pid: raise HTTPException(404,'المقطع غير موجود')
     return sec
@@ -186,7 +188,6 @@ def recover_account(data:RecoverAccount,request:Request,db:OrmSession=Depends(ge
     if not rec or not secrets.compare_digest(rec.code_hash,digest(data.code)):
         raise HTTPException(403,'البريد أو رمز الاستعادة غير صحيح')
     user.password_hash=hash_password.hash(data.new_password)
-    rec.code_hash=digest(secure_random())
     new_code=secure_random()
     rec.code_hash=digest(new_code)
     rec.created_at=now()
@@ -335,7 +336,9 @@ def add_fact(pid:int,data:FactCreate,user:User=Depends(auth),db:OrmSession=Depen
 
 @app.delete('/api/projects/{pid}/facts/{fid}')
 def del_fact(pid:int,fid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
-    owned_project(db,user,pid); f=db.get(Fact,fid)
+    owned_project(db,user,pid)
+    if not 1<=fid<=9223372036854775806: raise HTTPException(404,'الواقعة غير موجودة')
+    f=db.get(Fact,fid)
     if not f or f.project_id!=pid: raise HTTPException(404,'الواقعة غير موجودة')
     db.delete(f); db.commit(); return {'ok':True}
 
