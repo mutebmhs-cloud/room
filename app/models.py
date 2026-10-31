@@ -12,6 +12,13 @@ class Invite(Base):
     __tablename__='invites'
     id=Column(Integer,primary_key=True); token_hash=Column(String(64),unique=True,nullable=False)
     used_by=Column(Integer,ForeignKey('users.id',ondelete='CASCADE'),nullable=True); created_at=Column(DateTime(timezone=True),default=now)
+class RecoveryCode(Base):
+    __tablename__='recovery_codes'
+    id=Column(Integer,primary_key=True)
+    user_id=Column(Integer,ForeignKey('users.id',ondelete='CASCADE'),nullable=False,unique=True)
+    code_hash=Column(String(64),unique=True,nullable=False)
+    created_at=Column(DateTime(timezone=True),default=now)
+
 class Session(Base):
     __tablename__='sessions'
     id=Column(Integer,primary_key=True); token_hash=Column(String(64),unique=True,index=True,nullable=False)
