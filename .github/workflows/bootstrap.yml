@@ -2,6 +2,8 @@ name: Unpack verified writer application
 on:
   push:
     branches: [main]
+    paths:
+      - '85B3A7ADA9_A78483A7AAA8_858481A7AA_85B3AA88AFB9_A78486B4B1.zip'
   workflow_dispatch:
 permissions:
   contents: write
