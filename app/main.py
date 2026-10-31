@@ -24,6 +24,9 @@ ROOT=Path(__file__).parent
 async def lifespan(app):
     Base.metadata.create_all(bind=engine)
     bootstrap = os.getenv("BOOTSTRAP_INVITE", "").strip()
+    if os.getenv("PILOT_EPHEMERAL") == "1" and not bootstrap:
+        bootstrap = secrets.token_urlsafe(36)
+        print("PILOT_INVITE=" + bootstrap, flush=True)
     if bootstrap:
         if len(bootstrap) < 24:
             raise RuntimeError("BOOTSTRAP_INVITE must be at least 24 characters")
