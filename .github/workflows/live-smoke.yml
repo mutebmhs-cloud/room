@@ -45,6 +45,19 @@ jobs:
                   except Exception:failures.append(('bad-health-body',code,'json'))
               if path=='/' and code==200 and (b'html' not in body[:200].lower()):
                   failures.append(('html-signature',code,'html'))
+          try:
+              with urllib.request.urlopen(urllib.request.Request(root+'/',method='HEAD'), timeout=65) as response:
+                  print('HEAD /:',response.status)
+                  if response.status!=200:failures.append(('HEAD /',response.status,200))
+          except Exception as exc:
+              failures.append(('HEAD /',str(exc),200))
+          try:
+              with urllib.request.urlopen(urllib.request.Request(root+'/'),timeout=65) as response:
+                  html=response.read(16000).decode('utf-8')
+              if 'بيانات مصطنعة فقط' not in html:failures.append(('pilot-warning','missing','present'))
+              else: print('PUBLIC_PILOT_WARNING: present')
+          except Exception as exc:
+              failures.append(('pilot-warning',str(exc),'present'))
           print('RESULT:', 'PASS' if not failures else 'FAIL',failures)
           if failures: sys.exit(1)
           PY
