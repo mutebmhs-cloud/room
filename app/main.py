@@ -22,7 +22,7 @@ BLOCK_TYPES={'heading','action','character','dialogue','parenthetical','transiti
 ROOT=Path(__file__).parent
 @asynccontextmanager
 async def lifespan(app):
-    from . import services  # register additional tables before create_all
+    from . import services, services_partners  # register tables before create_all
     from .pilot import bootstrap_pilot
     Base.metadata.create_all(bind=engine)
     bootstrap_pilot()
@@ -546,3 +546,6 @@ app.include_router(pilot_router)
 
 from .services import router as services_router
 app.include_router(services_router)
+
+from .services_partners import router as partners_router
+app.include_router(partners_router)
