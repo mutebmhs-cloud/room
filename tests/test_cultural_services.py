@@ -55,3 +55,30 @@ def test_ai_requires_consent_and_foreign_sections_are_rejected(monkeypatch):
         assert created.json()["ai_processing_authorized"] is True
         assert client.get("/api/services/catalog").status_code==200
         assert post(client,csrf,"/api/services/requests",{**data,"service_key":"publishing"}).status_code==422
+
+def test_provider_invitation_requires_acceptance_and_scopes_text(monkeypatch):
+    monkeypatch.delenv("PILOT_INVITE_MODE",raising=False)
+    with TestClient(app) as author, TestClient(app) as provider, TestClient(app) as other:
+        a=sign_up(author,"inviter@example.test","unique-partner-invite-001")
+        b=sign_up(provider,"provider@example.test","unique-partner-invite-002")
+        x=sign_up(other,"observer@example.test","unique-partner-invite-003")
+        project=post(author,a,"/api/projects",{"title":"قصة فحص","kind":"children"}).json()["id"]
+        section=post(author,a,f"/api/projects/{project}/sections",{"title":"محتوى خاص"}).json()["id"]
+        job=post(author,a,"/api/services/requests",{"project_id":project,"service_key":"illustration","route":"human",
+            "title":"طلب رسم","brief":"مطلوب رسم شخصيات لمشروع تجريبي","section_ids":[section]}).json()["id"]
+        prof=post(provider,b,"/api/partners/profile",{"display_name":"رسام تجريبي","bio":"متخصص في تنفيذ رسوم قصص أطفال تجريبية","specialties":["illustration"]})
+        assert prof.status_code==200,prof.text
+        provider_id=prof.json()["user_id"]
+        assert prof.json()["verified"] is False
+        assert other.get(f"/api/partners/work/{job}").status_code==404
+        inv=post(author,a,f"/api/partners/requests/{job}/invite",{"provider_id":provider_id})
+        assert inv.status_code==200,inv.text
+        iid=inv.json()["invitation_id"]
+        assert provider.get(f"/api/partners/work/{job}").status_code==404
+        assert post(other,x,f"/api/partners/invitations/{iid}/decision",{"decision":"accepted"}).status_code==404
+        assert post(provider,b,f"/api/partners/invitations/{iid}/decision",{"decision":"accepted"}).status_code==200
+        assert provider.get(f"/api/partners/work/{job}").json()["shared_section_count"]==1
+        assert post(provider,b,f"/api/partners/work/{job}/messages",{"body":"سأراجع الموجز"}).status_code==200
+        assert any(n["body"]=="سأراجع الموجز" for n in author.get(f"/api/services/requests/{job}").json()["messages"])
+        assert post(author,a,f"/api/services/requests/{job}/state",{"status":"cancelled"}).status_code==200
+        assert provider.get(f"/api/partners/work/{job}").status_code==404
