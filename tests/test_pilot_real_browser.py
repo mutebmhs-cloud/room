@@ -35,6 +35,8 @@ def login_admin(page):
     page.locator('#email').fill('test-admin')
     page.locator('#password').fill(ADMIN_CODE)
     page.locator('#authSubmit').click()
+    page.wait_for_timeout(1100)
+    print('ADMIN_DIAG',{'url':page.url,'msg':page.locator('#authMessage').inner_text(),'form':page.locator('#auth').get_attribute('class'),'html':page.locator('#authTitle').inner_text()},flush=True)
     expect(page).to_have_url(BASE+'/admin',timeout=15000)
     expect(page.locator('#newWriter')).to_be_visible()
     record('manager login and dashboard navigation')
