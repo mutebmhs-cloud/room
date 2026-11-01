@@ -82,3 +82,19 @@ def test_provider_invitation_requires_acceptance_and_scopes_text(monkeypatch):
         assert any(n["body"]=="سأراجع الموجز" for n in author.get(f"/api/services/requests/{job}").json()["messages"])
         assert post(author,a,f"/api/services/requests/{job}/state",{"status":"cancelled"}).status_code==200
         assert provider.get(f"/api/partners/work/{job}").status_code==404
+
+def test_specialist_review_requires_new_consent_and_configured_provider(monkeypatch):
+    monkeypatch.delenv("PILOT_INVITE_MODE",raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY",raising=False)
+    with TestClient(app) as writer:
+        csrf=sign_up(writer,"specialist@example.test","unique-service-ai-invite-004")
+        project=post(writer,csrf,"/api/projects",{"title":"رواية تجريبية","kind":"novel"}).json()["id"]
+        sec=post(writer,csrf,f"/api/projects/{project}/sections",{"title":"مسودة اصطناعية"}).json()["id"]
+        job=post(writer,csrf,"/api/services/requests",{"project_id":project,"service_key":"proofread",
+          "route":"ai","title":"مراجعة لغوية","brief":"تدقيق إملائي ونحوي تجريبي فقط",
+          "section_ids":[sec],"allow_ai_processing":True}).json()["id"]
+        url=f"/api/specialists/requests/{job}/run"
+        assert post(writer,csrf,url,{"confirm_external_processing":False,"confirm_review_not_auto_edit":True}).status_code==422
+        assert post(writer,csrf,url,{"confirm_external_processing":True,"confirm_review_not_auto_edit":True}).status_code==503
+        assert writer.get(f"/api/specialists/requests/{job}/runs").json()==[]
+        assert writer.get("/api/specialists/status").json()["automatic_edits"] is False
