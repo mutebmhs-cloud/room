@@ -29,6 +29,7 @@ window.mountCulturalServices=async function(){
   try{await api('/services/requests',{method:'POST',body:JSON.stringify(payload)});toast('حُفظ الطلب في مساحة المشروع دون إرسال خارجي');await window.mountCulturalServices()}
   catch(e){toast(e.message)}
  });
+ if(window.renderPartnerWidgets)await window.renderPartnerWidgets();
  root.addEventListener('click',async e=>{
   const btn=e.target.closest('[data-service-request]');if(!btn)return;
   const req=await api('/services/requests/'+btn.dataset.serviceRequest);
