@@ -1,0 +1,31 @@
+name: Real Chromium Pilot E2E
+on:
+  push:
+    paths:
+      - '.github/workflows/real-browser.yml'
+      - 'tests/test_pilot_real_browser.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend and Playwright
+        run: |
+          python -m pip install -r requirements.txt playwright==1.58.0
+          python -m playwright install chromium --with-deps
+      - name: Run authenticated real-browser tests with synthetic content
+        env:
+          TEST_ADMIN_CODE: Only-Synthetic-Browser-Test-Credential-Not-Public-2026
+        run: python tests/test_pilot_real_browser.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: writer-browser-e2e-screenshots
+          path: /tmp/writer-browser-artifacts/
