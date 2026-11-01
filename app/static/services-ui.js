@@ -38,6 +38,19 @@ window.mountCulturalServices=async function(){
    (req.shared_sections.length?'<details><summary>معاينة المقاطع التي سمحت بمشاركتها</summary>'+req.shared_sections.map(s=>'<div class="card"><b>'+esc(s.title)+'</b><p>'+esc(s.body||s.blocks.map(b=>b.text).join(' ')).slice(0,3000)+'</p></div>').join('')+'</details>':'')+
    '<h4>ملاحظات الطلب</h4>'+(req.messages.map(m=>'<p class="aside-note">'+esc(m.body)+'</p>').join('')||'<p class="muted">لا توجد ملاحظات</p>')+
    (req.status==='cancelled'||req.status==='accepted'?'':'<form id="srvNoteForm"><label>أضف ملاحظة للطلب<textarea name="body" required minlength="2" maxlength="3000"></textarea></label><button class="soft-btn">حفظ الملاحظة</button></form><button class="soft-btn danger" id="srvCancel">إلغاء الطلب</button>');
+  if(['ai','hybrid'].includes(req.route)&&['proofread','editorial','screenplay'].includes(req.service_key)&&!['cancelled','accepted'].includes(req.status)){
+    detail.insertAdjacentHTML('beforeend','<div class="card" style="margin-top:14px"><h4>المراجع الذكي المتخصص</h4><p class="hint">يتطلب تشغيلًا بمفتاح مزود على الخادم وموافقة مستقلة. المخرجات مقترحات ولا تُطبق على المخطوط تلقائيًا.</p><button class="soft-btn" id="srvRunAi">تنفيذ مراجعة ذكية للنص المختار</button><div id="srvAiReport"></div></div>');
+    detail.querySelector('#srvRunAi').addEventListener('click',async ev=>{
+      if(!confirm('هل توافق على إرسال المقاطع التي اخترتها ضمن هذا الطلب إلى مزود الذكاء الاصطناعي لإجراء مراجعة متخصصة؟ لا تُرسل باقي أجزاء مشروعك.'))return;
+      const button=ev.currentTarget;button.disabled=true;button.textContent='تجري المراجعة...';
+      try{
+        const result=await api('/specialists/requests/'+req.id+'/run',{method:'POST',body:JSON.stringify({confirm_external_processing:true,confirm_review_not_auto_edit:true})});
+        detail.querySelector('#srvAiReport').innerHTML='<h4>التقرير</h4><p>'+esc(result.report.summary)+'</p>'+
+          result.report.findings.map(f=>'<div class="aside-note"><b>'+esc(f.level==='error'?'خطأ':'اقتراح')+'</b><p>النص: '+esc(f.original)+'</p><p>التعديل المقترح: '+esc(f.suggestion)+'</p><p>السبب: '+esc(f.reason)+'</p></div>').join('');
+        toast('اكتملت المراجعة؛ لم يُعدّل نصك');
+      }catch(err){toast(err.message)}finally{button.disabled=false;button.textContent='تنفيذ مراجعة ذكية للنص المختار'}
+    });
+  }
   const note=detail.querySelector('#srvNoteForm');if(note)note.addEventListener('submit',async ev=>{ev.preventDefault();try{await api('/services/requests/'+req.id+'/messages',{method:'POST',body:JSON.stringify({body:note.elements.body.value})});toast('حُفظت الملاحظة');btn.click()}catch(err){toast(err.message)}});
   const cancel=detail.querySelector('#srvCancel');if(cancel)cancel.addEventListener('click',async()=>{if(!confirm('إلغاء طلب الخدمة؟'))return;try{await api('/services/requests/'+req.id+'/state',{method:'POST',body:JSON.stringify({status:'cancelled'})});await window.mountCulturalServices()}catch(err){toast(err.message)}});
  });
