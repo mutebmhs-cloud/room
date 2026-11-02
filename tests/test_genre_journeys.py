@@ -37,6 +37,8 @@ def account(client):
 def test_full_writer_genre_journey(genre,monkeypatch):
     """Create, brainstorm, structure, save, evidence, detect conflict, restore, checkpoint, backup."""
     monkeypatch.delenv("PILOT_INVITE_MODE",raising=False)
+    # Genre tests use many synthetic accounts; throttle behavior is covered by security tests.
+    monkeypatch.setattr(main,"throttle",lambda *args,**kwargs:None)
     sample=GENRES[genre]
     with TestClient(app) as writer, TestClient(app) as intruder:
         csrf=account(writer); ic=account(intruder)
@@ -115,6 +117,8 @@ def test_full_writer_genre_journey(genre,monkeypatch):
 def test_chat_shared_context_is_opt_in(genre,monkeypatch):
     """Confidentiality and genre routing; no real model call is made."""
     monkeypatch.delenv("PILOT_INVITE_MODE",raising=False)
+    # Genre tests use many synthetic accounts; throttle behavior is covered by security tests.
+    monkeypatch.setattr(main,"throttle",lambda *args,**kwargs:None)
     captured=[]
     async def fake_ai(kind,message,context,history):
         captured.append((kind,message,context,history))
@@ -146,6 +150,8 @@ def test_chat_shared_context_is_opt_in(genre,monkeypatch):
 
 def test_invalid_genres_and_unsafe_screenplay_blocks(monkeypatch):
     monkeypatch.delenv("PILOT_INVITE_MODE",raising=False)
+    # Genre tests use many synthetic accounts; throttle behavior is covered by security tests.
+    monkeypatch.setattr(main,"throttle",lambda *args,**kwargs:None)
     with TestClient(app) as writer:
         csrf=account(writer)
         assert write(writer,csrf,"/api/projects",{"title":"شعر","kind":"poetry"}).status_code==422
