@@ -7,6 +7,7 @@ from playwright.sync_api import sync_playwright
 from playwright.sync_api import TimeoutError as PWTimeout
 
 ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT))
 fd,dbpath=tempfile.mkstemp(prefix="writer-browser-all-genres-",suffix=".sqlite")
 os.close(fd)
 os.environ["DATABASE_URL"]="sqlite:///"+dbpath
