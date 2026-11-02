@@ -43,6 +43,8 @@ try:
         page.locator("#invite").fill(invitation)
         page.locator("#authSubmit").click()
         page.locator("#newProject").wait_for(timeout=20000)
+        if page.locator("#modalOverlay").count():
+            page.locator('#modalOverlay [data-action="close-modal"]').click()
         steps.append("real-browser-registration")
         cases=[
             ("novel","رواية اختبار متصفح","فصل البداية","تصل البطلة إلى المدينة القديمة."),
