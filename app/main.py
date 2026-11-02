@@ -555,3 +555,6 @@ app.include_router(specialists_router)
 
 from .writer_growth import router as growth_router
 app.include_router(growth_router)
+
+from .pro_export import router as pro_export_router
+app.include_router(pro_export_router)
