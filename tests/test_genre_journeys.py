@@ -109,7 +109,7 @@ def test_full_writer_genre_journey(genre,monkeypatch):
             assert imported.json()["added_scenes"]==1
         else:
             assert writer.get(f"/api/projects/{pid}/fountain").status_code==422
-        assert genre in instruction(genre) or genre=="flash" # genre guidance tested separately
+        assert "الكاتب" in instruction(genre) and "لا تكتب" in instruction(genre)
 
 @pytest.mark.parametrize("genre",list(GENRES))
 def test_chat_shared_context_is_opt_in(genre,monkeypatch):
