@@ -47,7 +47,7 @@ jobs:
           python - <<'PY'
           from app.db import Base,engine,SessionLocal
           from app.models import User,Project,Section,Revision
-          from app import pilot,services,services_partners,services_ai,writer_growth
+          from app.main import app  # import all registered models in application order
           from app.security import hash_password
           Base.metadata.create_all(bind=engine)
           with SessionLocal() as db:
