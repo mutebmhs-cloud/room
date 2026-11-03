@@ -98,7 +98,11 @@ def create_work(page,kind,label):
     page.locator('[data-tab=coach]').first.click()
     expect(page.get_by_text('مدربك الشخصي').first).to_be_visible()
     record('complete writing/editing path: '+kind)
-    page.locator('[data-action=view][data-view=home]').first.click()
+    if page.locator('#modalOverlay').count():
+        raise AssertionError('Unexpected modal after saved work for '+kind+': '+page.locator('#modalOverlay').inner_text()[:1200])
+    page.locator('[data-action=view][data-view=home]').first.click(timeout=6000)
+    if page.locator('#modalOverlay').count():
+        raise AssertionError('Navigation blocked for '+kind+': '+page.locator('#modalOverlay').inner_text()[:1200])
     expect(page.locator('#newProject')).to_be_visible()
 
 def run():
