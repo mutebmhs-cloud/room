@@ -15,6 +15,7 @@ from .db import Base, engine, get_db, SessionLocal
 from .models import User, Invite, RecoveryCode, Session as LoginSession, Project, Section, Revision, Fact, Chat, now
 from .security import hash_password, digest, secure_random, pw_valid, verify, require_csrf, COOKIE_NAME, SESSION_DAYS, IS_PROD, csrf_for_session
 from .ai import analyze
+import unicodedata
 from .fountain import parse as parse_fountain, FountainError
 
 KINDS={'novel','short','flash','children','screenplay'}
@@ -226,14 +227,38 @@ class CreateProject(BaseModel):
     title:str=Field(min_length=1,max_length=240)
     kind:Literal['novel','short','flash','children','screenplay']
 
+def normalized_title(value:str)->str:
+    return ' '.join(unicodedata.normalize('NFKC',value).split()).casefold()
+
+def catalog_project(p):
+    return {'id':p.id,'title':p.title,'kind':p.kind,'premise':p.premise[:450],
+            'version':p.version,'updated_at':p.updated_at.isoformat() if p.updated_at else None}
+
+@app.get('/api/projects/catalog')
+def project_catalog(user:User=Depends(auth),db:OrmSession=Depends(get_db)):
+    return [catalog_project(p) for p in db.scalars(
+        select(Project).where(Project.user_id==user.id).order_by(Project.updated_at.desc())
+    ).all()]
+
 @app.get('/api/projects')
 def list_projects(user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     return [proj_json(p) for p in db.scalars(select(Project).where(Project.user_id==user.id).order_by(Project.updated_at.desc())).all()]
 
 @app.post('/api/projects')
 def create_project(data:CreateProject,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
-    if not data.title.strip(): raise HTTPException(422,'اسم العمل لا يمكن أن يكون فارغًا')
-    p=Project(user_id=user.id,title=data.title.strip(),kind=data.kind,structure='{}',checkpoint='{}'); db.add(p); db.commit(); return proj_json(p)
+    title=' '.join(data.title.split())
+    if not title: raise HTTPException(422,'اسم العمل لا يمكن أن يكون فارغًا')
+    # PostgreSQL transaction lock serializes project creation per author.
+    # Legacy projects may already contain duplicate titles; do not destroy them.
+    if db.bind.dialect.name=='postgresql':
+        db.execute(text('SELECT pg_advisory_xact_lock(:lock_id)'),{'lock_id':int(user.id)+913570000})
+    existing=db.scalars(select(Project).where(Project.user_id==user.id,Project.kind==data.kind)).all()
+    found=next((p for p in existing if normalized_title(p.title)==normalized_title(title)),None)
+    if found:
+        return {**proj_json(found),'reused':True}
+    p=Project(user_id=user.id,title=title,kind=data.kind,structure='{}',checkpoint='{}')
+    db.add(p);db.commit()
+    return {**proj_json(p),'reused':False}
 
 @app.get('/api/projects/{pid}')
 def get_project(pid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
@@ -300,6 +325,11 @@ def update_section(pid:int,sid:int,data:SectionUpdate,user:User=Depends(auth),db
     result=db.execute(update(Section).where(Section.id==sid,Section.project_id==pid,Section.version==data.version).values(title=data.title.strip(),body=data.body,blocks=json.dumps(data.blocks,ensure_ascii=False),version=Section.version+1,updated_at=now()))
     if result.rowcount!=1: db.rollback(); raise HTTPException(409,'تعديل أحدث موجود')
     db.add(snapshot)
+    db.flush()
+    # Retain exactly the latest three preceding revisions; existing history is
+    # pruned only when that section next receives a successful new revision.
+    latest_ids=select(Revision.id).where(Revision.section_id==sid).order_by(Revision.version.desc()).limit(3)
+    db.execute(delete(Revision).where(Revision.section_id==sid,Revision.id.not_in(latest_ids)))
     try: db.commit()
     except IntegrityError: db.rollback(); raise HTTPException(409,'تعارض تحديث. أعد تحميل المشروع')
     return sec_json(db.get(Section,sid))
@@ -307,7 +337,7 @@ def update_section(pid:int,sid:int,data:SectionUpdate,user:User=Depends(auth),db
 @app.get('/api/projects/{pid}/sections/{sid}/revisions')
 def revisions(pid:int,sid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     owned_section(db,user,pid,sid)
-    return [{'version':r.version,'title':r.title,'created_at':r.created_at.isoformat()} for r in db.scalars(select(Revision).where(Revision.section_id==sid).order_by(Revision.version.desc()).limit(100))]
+    return [{'version':r.version,'title':r.title,'created_at':r.created_at.isoformat()} for r in db.scalars(select(Revision).where(Revision.section_id==sid).order_by(Revision.version.desc()).limit(3))]
 
 class Restore(BaseModel):
     current_version:int=Field(ge=1,le=9223372036854775806)
@@ -322,7 +352,10 @@ def restore(pid:int,sid:int,data:Restore,user:User=Depends(auth),db:OrmSession=D
     snap=Revision(section_id=sid,version=old.version,title=old.title,body=old.body,blocks=old.blocks)
     res=db.execute(update(Section).where(Section.id==sid,Section.version==data.current_version).values(title=target.title,body=target.body,blocks=target.blocks,version=Section.version+1,updated_at=now()))
     if res.rowcount!=1: db.rollback(); raise HTTPException(409,'تعارض استعادة')
-    db.add(snap); db.commit(); return sec_json(db.get(Section,sid))
+    db.add(snap);db.flush()
+    latest_ids=select(Revision.id).where(Revision.section_id==sid).order_by(Revision.version.desc()).limit(3)
+    db.execute(delete(Revision).where(Revision.section_id==sid,Revision.id.not_in(latest_ids)))
+    db.commit(); return sec_json(db.get(Section,sid))
 
 @app.delete('/api/projects/{pid}/sections/{sid}')
 def delete_section(pid:int,sid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
@@ -543,3 +576,5 @@ def delete_account(data:DeleteAccount,user:User=Depends(auth),db:OrmSession=Depe
 
 from .pilot import router as pilot_router
 app.include_router(pilot_router)
+from .writer_intelligence import router as intelligence_router
+app.include_router(intelligence_router)
