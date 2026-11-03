@@ -92,6 +92,13 @@ def create_work(page,kind,label):
         page.locator('#editorBody').fill('نص مصطنع يخص اختبار '+label)
     page.locator('[data-action=save-section]').first.click()
     page.wait_for_timeout(350)
+    if kind=='novel':
+        page.locator('[data-action=edit-summary]').first.click()
+        expect(page.locator('#summaryForm')).to_be_visible()
+        page.locator('#summaryForm [name=summary]').fill('ملخص مصطنع لاختبار الاستمرارية')
+        page.locator('#summaryForm button.primary').click()
+        expect(page.get_by_text('ملخص مصطنع لاختبار الاستمرارية')).to_be_visible()
+        record('writer manually saves chapter synopsis')
     page.locator('[data-tab=structure]').first.click()
     page.locator('[data-structure-field=protagonist]').fill('شخصية تجريبية')
     page.locator('[data-action=save-project]').first.click()
