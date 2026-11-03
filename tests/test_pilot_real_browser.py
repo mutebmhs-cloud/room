@@ -155,6 +155,7 @@ def run():
                 w.locator('#createProjectForm select[name=kind]').select_option('novel')
                 w.locator('#createProjectForm button.primary').click()
                 expect(w.locator('[data-action=resume-location]')).to_be_visible(timeout=10000)
+                expect(w.get_by_text('العودة إلى الكتابة')).to_be_visible()
                 w.locator('[data-action=resume-location]').click()
                 expect(w.locator('#editorBody')).to_be_visible(timeout=10000)
                 record('automatic return to previous manuscript position')
