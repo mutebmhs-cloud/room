@@ -15,4 +15,32 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m compileall -q app scripts tests
-      - run: python -m pytest -q tests/test_acceptance.py tests/test_extended.py tests/test_publish_regression.py tests/test_release_regressions.py tests/test_pilot_invites.py
+      - run: node --check app/static/app.js && node --check app/static/admin.js
+      - run: python -m pytest -q tests/test_acceptance.py tests/test_extended.py tests/test_publish_regression.py tests/test_release_regressions.py tests/test_pilot_invites.py tests/test_writer_intelligence.py
+
+  postgres-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: writer_ci
+          POSTGRES_PASSWORD: writer_ci_pass
+          POSTGRES_DB: writer_space_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U writer_ci -d writer_space_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Test v2 writer data lifecycle against isolated PostgreSQL
+        env:
+          DATABASE_URL: postgresql+psycopg://writer_ci:writer_ci_pass@localhost:5432/writer_space_ci
+        run: python scripts/postgres_ci_smoke.py

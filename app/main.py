@@ -15,6 +15,7 @@ from .db import Base, engine, get_db, SessionLocal
 from .models import User, Invite, RecoveryCode, Session as LoginSession, Project, Section, Revision, Fact, Chat, now
 from .security import hash_password, digest, secure_random, pw_valid, verify, require_csrf, COOKIE_NAME, SESSION_DAYS, IS_PROD, csrf_for_session
 from .ai import analyze
+import unicodedata
 from .fountain import parse as parse_fountain, FountainError
 
 KINDS={'novel','short','flash','children','screenplay'}
@@ -226,14 +227,38 @@ class CreateProject(BaseModel):
     title:str=Field(min_length=1,max_length=240)
     kind:Literal['novel','short','flash','children','screenplay']
 
+def normalized_title(value:str)->str:
+    return ' '.join(unicodedata.normalize('NFKC',value).split()).casefold()
+
+def catalog_project(p):
+    return {'id':p.id,'title':p.title,'kind':p.kind,'premise':p.premise[:450],
+            'version':p.version,'updated_at':p.updated_at.isoformat() if p.updated_at else None}
+
+@app.get('/api/projects/catalog')
+def project_catalog(user:User=Depends(auth),db:OrmSession=Depends(get_db)):
+    return [catalog_project(p) for p in db.scalars(
+        select(Project).where(Project.user_id==user.id).order_by(Project.updated_at.desc())
+    ).all()]
+
 @app.get('/api/projects')
 def list_projects(user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     return [proj_json(p) for p in db.scalars(select(Project).where(Project.user_id==user.id).order_by(Project.updated_at.desc())).all()]
 
 @app.post('/api/projects')
 def create_project(data:CreateProject,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
-    if not data.title.strip(): raise HTTPException(422,'اسم العمل لا يمكن أن يكون فارغًا')
-    p=Project(user_id=user.id,title=data.title.strip(),kind=data.kind,structure='{}',checkpoint='{}'); db.add(p); db.commit(); return proj_json(p)
+    title=' '.join(data.title.split())
+    if not title: raise HTTPException(422,'اسم العمل لا يمكن أن يكون فارغًا')
+    # PostgreSQL transaction lock serializes project creation per author.
+    # Legacy projects may already contain duplicate titles; do not destroy them.
+    if db.bind.dialect.name=='postgresql':
+        db.execute(text('SELECT pg_advisory_xact_lock(:lock_id)'),{'lock_id':int(user.id)+913570000})
+    existing=db.execute(select(Project.id,Project.title).where(Project.user_id==user.id,Project.kind==data.kind)).all()
+    found_id=next((item.id for item in existing if normalized_title(item.title)==normalized_title(title)),None)
+    if found_id:
+        return {**proj_json(db.get(Project,found_id)),'reused':True}
+    p=Project(user_id=user.id,title=title,kind=data.kind,structure='{}',checkpoint='{}')
+    db.add(p);db.commit()
+    return {**proj_json(p),'reused':False}
 
 @app.get('/api/projects/{pid}')
 def get_project(pid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
@@ -252,8 +277,14 @@ class UpdateProject(BaseModel):
 
 @app.put('/api/projects/{pid}')
 def update_project(pid:int,data:UpdateProject,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
-    owned_project(db,user,pid)
+    current=owned_project(db,user,pid)
     if not data.title.strip(): raise HTTPException(422,'اسم العمل لا يمكن أن يكون فارغًا')
+    if normalized_title(data.title)!=normalized_title(current.title):
+        if db.bind.dialect.name=='postgresql':
+            db.execute(text('SELECT pg_advisory_xact_lock(:lock_id)'),{'lock_id':int(user.id)+913570000})
+        matches=db.execute(select(Project.id,Project.title).where(Project.user_id==user.id,Project.kind==current.kind,Project.id!=pid)).all()
+        if any(normalized_title(item.title)==normalized_title(data.title) for item in matches):
+            raise HTTPException(409,'لديك مشروع آخر بهذا الاسم والنوع')
     if len(json.dumps(data.structure,ensure_ascii=False))>50000 or len(json.dumps(data.checkpoint,ensure_ascii=False))>16000: raise HTTPException(413,'البيانات المنظمة طويلة')
     other_bytes=sum(len(s.body.encode('utf-8'))+len(s.blocks.encode('utf-8')) for s in db.scalars(select(Section).where(Section.project_id==pid)))
     if other_bytes+len(data.scratchpad.encode('utf-8'))>25_000_000: raise HTTPException(413,'العمل يتجاوز سعة الاختبار، صدّر نسخة احتياطية')
@@ -300,6 +331,11 @@ def update_section(pid:int,sid:int,data:SectionUpdate,user:User=Depends(auth),db
     result=db.execute(update(Section).where(Section.id==sid,Section.project_id==pid,Section.version==data.version).values(title=data.title.strip(),body=data.body,blocks=json.dumps(data.blocks,ensure_ascii=False),version=Section.version+1,updated_at=now()))
     if result.rowcount!=1: db.rollback(); raise HTTPException(409,'تعديل أحدث موجود')
     db.add(snapshot)
+    db.flush()
+    # Retain exactly the latest three preceding revisions; existing history is
+    # pruned only when that section next receives a successful new revision.
+    latest_ids=select(Revision.id).where(Revision.section_id==sid).order_by(Revision.version.desc()).limit(3)
+    db.execute(delete(Revision).where(Revision.section_id==sid,Revision.id.not_in(latest_ids)))
     try: db.commit()
     except IntegrityError: db.rollback(); raise HTTPException(409,'تعارض تحديث. أعد تحميل المشروع')
     return sec_json(db.get(Section,sid))
@@ -307,7 +343,7 @@ def update_section(pid:int,sid:int,data:SectionUpdate,user:User=Depends(auth),db
 @app.get('/api/projects/{pid}/sections/{sid}/revisions')
 def revisions(pid:int,sid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     owned_section(db,user,pid,sid)
-    return [{'version':r.version,'title':r.title,'created_at':r.created_at.isoformat()} for r in db.scalars(select(Revision).where(Revision.section_id==sid).order_by(Revision.version.desc()).limit(100))]
+    return [{'version':r.version,'title':r.title,'created_at':r.created_at.isoformat()} for r in db.scalars(select(Revision).where(Revision.section_id==sid).order_by(Revision.version.desc()).limit(3))]
 
 class Restore(BaseModel):
     current_version:int=Field(ge=1,le=9223372036854775806)
@@ -317,12 +353,16 @@ class Restore(BaseModel):
 def restore(pid:int,sid:int,data:Restore,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     old=owned_section(db,user,pid,sid)
     if old.version!=data.current_version: raise HTTPException(409,'تعديل أحدث موجود')
-    target=db.scalar(select(Revision).where(Revision.section_id==sid,Revision.version==data.target_version))
+    available=db.scalars(select(Revision).where(Revision.section_id==sid).order_by(Revision.version.desc()).limit(3)).all()
+    target=next((rev for rev in available if rev.version==data.target_version),None)
     if not target: raise HTTPException(404,'النسخة المطلوبة غير موجودة')
     snap=Revision(section_id=sid,version=old.version,title=old.title,body=old.body,blocks=old.blocks)
     res=db.execute(update(Section).where(Section.id==sid,Section.version==data.current_version).values(title=target.title,body=target.body,blocks=target.blocks,version=Section.version+1,updated_at=now()))
     if res.rowcount!=1: db.rollback(); raise HTTPException(409,'تعارض استعادة')
-    db.add(snap); db.commit(); return sec_json(db.get(Section,sid))
+    db.add(snap);db.flush()
+    latest_ids=select(Revision.id).where(Revision.section_id==sid).order_by(Revision.version.desc()).limit(3)
+    db.execute(delete(Revision).where(Revision.section_id==sid,Revision.id.not_in(latest_ids)))
+    db.commit(); return sec_json(db.get(Section,sid))
 
 @app.delete('/api/projects/{pid}/sections/{sid}')
 def delete_section(pid:int,sid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
@@ -393,13 +433,19 @@ async def chat(pid:int,data:ChatRequest,request:Request,user:User=Depends(auth),
 @app.get('/api/projects/{pid}/export')
 def export_project(pid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     p=owned_project(db,user,pid)
+    from .writer_intelligence import SectionSynopsis, progress_json
     sections=db.scalars(select(Section).where(Section.project_id==pid).order_by(Section.position,Section.id)).all()
+    synopses=db.scalars(select(SectionSynopsis).where(SectionSynopsis.project_id==pid)).all()
     return {'format':'writer-cloud-v2','project':{**proj_json(p),'kind':p.kind},
             'sections':[sec_json(x) for x in sections],
             'facts':[fact_json(x,{s.id:s.version for s in sections}) for x in db.scalars(select(Fact).where(Fact.project_id==pid))],
             'revisions':[{'section_id':r.section_id,'version':r.version,'title':r.title,'body':r.body,'blocks':_json(r.blocks,[])}
                          for r in db.scalars(select(Revision).where(Revision.section_id.in_([a.id for a in sections])).order_by(Revision.section_id,Revision.version))],
-            'chats':[{'role':x.role,'text':x.text,'proposals':_json(x.proposals,[])} for x in db.scalars(select(Chat).where(Chat.project_id==pid).order_by(Chat.id))]}
+            'chats':[{'role':x.role,'text':x.text,'proposals':_json(x.proposals,[])} for x in db.scalars(select(Chat).where(Chat.project_id==pid).order_by(Chat.id))],
+            'synopses':[{'section_id':x.section_id,'summary':x.summary,'central_event':x.central_event,
+                         'character_change':x.character_change,'open_question':x.open_question,
+                         'source_hash':x.source_hash,'origin':x.origin} for x in synopses],
+            'progress':progress_json(db,pid)}
 
 class ImportData(BaseModel):
     model_config=ConfigDict(extra='forbid')
@@ -412,7 +458,9 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
     if fmt not in ('writer-cloud-v1','writer-cloud-v2') or not isinstance(raw.get('project'),dict) or not isinstance(raw.get('sections'),list) or not isinstance(raw.get('facts'),list): raise HTTPException(422,'صيغة النسخة الاحتياطية غير صالحة')
     revs=raw.get('revisions',[]) if fmt=='writer-cloud-v2' else []
     chats=raw.get('chats',[]) if fmt=='writer-cloud-v2' else []
-    if not isinstance(revs,list) or len(revs)>10000 or not isinstance(chats,list) or len(chats)>3000: raise HTTPException(422,'عدد سجلات النسخة الاحتياطية غير صالح')
+    synopses=raw.get('synopses',[]) if fmt=='writer-cloud-v2' else []
+    progress=raw.get('progress',None) if fmt=='writer-cloud-v2' else None
+    if not isinstance(revs,list) or len(revs)>10000 or not isinstance(chats,list) or len(chats)>3000 or not isinstance(synopses,list) or len(synopses)>400: raise HTTPException(422,'عدد سجلات النسخة الاحتياطية غير صالح')
     if len(json.dumps(raw,ensure_ascii=False).encode('utf-8'))>30_000_000: raise HTTPException(413,'النسخة الاحتياطية كبيرة جدًا')
     proj=raw['project']; kind=proj.get('kind')
     if kind not in KINDS or not isinstance(proj.get('title'),str) or not (1<=len(proj['title'])<=240) or not proj['title'].strip() or len(raw['sections'])>400 or len(raw['facts'])>3000: raise HTTPException(422,'بيانات المشروع غير صالحة')
@@ -441,6 +489,22 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
             checked_revisions.add(identity)
             if not isinstance(rev.get('title'),str) or not 1<=len(rev['title'])<=240 or not rev['title'].strip() or not isinstance(rev.get('body'),str) or len(rev['body'])>450000 or not isinstance(rev.get('blocks'),list): raise ValueError('revision')
             validate_blocks(rev['blocks'])
+        synopsis_ids=set()
+        for synopsis in synopses:
+            if not isinstance(synopsis,dict) or synopsis.get('section_id') not in version_map:
+                raise ValueError('synopsis source')
+            if synopsis['section_id'] in synopsis_ids: raise ValueError('duplicate synopsis')
+            synopsis_ids.add(synopsis['section_id'])
+            for key,limit in [('summary',1200),('central_event',600),('character_change',600),('open_question',600)]:
+                if not isinstance(synopsis.get(key,''),str) or len(synopsis.get(key,''))>limit:
+                    raise ValueError('synopsis length')
+            if not isinstance(synopsis.get('source_hash',''),str) or len(synopsis.get('source_hash',''))>64:
+                raise ValueError('synopsis fingerprint')
+        if progress is not None:
+            if (not isinstance(progress,dict) or progress.get('tab') not in {'free','manuscript','structure','overview','checkpoint'} or
+               progress.get('section_id') is not None and progress['section_id'] not in version_map or
+               type(progress.get('cursor_offset',0)) is not int or not 0<=progress.get('cursor_offset',0)<=450000):
+                raise ValueError('progress')
         for msg in chats:
             if not isinstance(msg,dict) or msg.get('role') not in ('user','assistant') or not isinstance(msg.get('text'),str) or len(msg['text'])>6000 or not isinstance(msg.get('proposals'),list) or len(json.dumps(msg['proposals'],ensure_ascii=False))>12000: raise ValueError('chat')
         for f in raw['facts']:
@@ -468,6 +532,23 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
         pp.checkpoint=json.dumps(cp,ensure_ascii=False)
         for rev in revs:
             db.add(Revision(section_id=old_map[rev['section_id']],version=rev['version'],title=rev['title'].strip(),body=rev['body'],blocks=json.dumps(rev['blocks'],ensure_ascii=False)))
+        from .writer_intelligence import SectionSynopsis, WriterProgress, section_text, fingerprint
+        for summary in synopses:
+            original=summary['section_id'];new_id=old_map[original]
+            new_section=db.get(Section,new_id)
+            source_hash=summary.get('source_hash','') or fingerprint(section_text(new_section))
+            db.add(SectionSynopsis(
+                section_id=new_id,project_id=pp.id,
+                summary=summary.get('summary',''),
+                central_event=summary.get('central_event',''),
+                character_change=summary.get('character_change',''),
+                open_question=summary.get('open_question',''),
+                source_hash=source_hash,
+                origin='writer' if summary.get('origin')=='writer' else 'ai_reviewed'))
+        if progress:
+            db.add(WriterProgress(project_id=pp.id,user_id=user.id,
+                section_id=old_map.get(progress.get('section_id')),
+                tab=progress['tab'],cursor_offset=progress.get('cursor_offset',0)))
         for msg in chats:
             db.add(Chat(project_id=pp.id,role=msg['role'],text=msg['text'],proposals=json.dumps(msg['proposals'],ensure_ascii=False)))
         for f in raw['facts']:
@@ -543,3 +624,5 @@ def delete_account(data:DeleteAccount,user:User=Depends(auth),db:OrmSession=Depe
 
 from .pilot import router as pilot_router
 app.include_router(pilot_router)
+from .writer_intelligence import router as intelligence_router
+app.include_router(intelligence_router)
