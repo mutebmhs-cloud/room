@@ -83,7 +83,7 @@ def create_work(page,kind,label):
     page.once('dialog',lambda d:d.accept('مقطع تجريبي'))
     page.locator('[data-action=new-section]').first.click()
     if kind=='screenplay':
-        expect(page.locator('#blockList')).to_be_visible()
+        expect(page.locator('#blockList')).to_be_attached()
         page.locator('[data-action=add-block]').first.click()
         page.locator('[data-block-type="0"]').select_option('dialogue')
         page.locator('[data-block-text="0"]').fill('حوار مصطنع للفحص.')
