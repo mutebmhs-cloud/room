@@ -69,6 +69,9 @@ def create_work(page,kind,label):
     page.locator('#createProjectForm select[name=kind]').select_option(kind)
     page.locator('#createProjectForm button.primary').click()
     expect(page.locator('#scratch')).to_be_visible(timeout=12000)
+    if kind=='novel':
+        expect(page.locator('#autoUnderstand')).to_be_disabled()
+        record('no automatic AI processing without an activated provider')
     page.locator('#scratch').fill('تجربة مصطنعة للنوع '+label)
     page.locator('[data-action=save-project]').first.click()
     page.wait_for_timeout(350)
