@@ -201,8 +201,12 @@ def get_intelligence(pid:int,user:User=Depends(core.auth),db:Session=Depends(get
  pending=db.scalars(select(WriterAnalysis).where(
   WriterAnalysis.project_id==pid,WriterAnalysis.state=='pending'
  ).order_by(WriterAnalysis.id.desc()).limit(5)).all()
+ reviews=db.scalars(select(WriterAnalysis).where(
+  WriterAnalysis.project_id==pid,WriterAnalysis.scope=='critique'
+ ).order_by(WriterAnalysis.id.desc()).limit(5)).all()
  return {'summaries':{str(x.section_id):synopsis_json(x,sec_by_id.get(x.section_id)) for x in rows},
   'progress':progress_json(db,pid),'drafts':[analysis_json(x) for x in pending],
+  'reviews':[analysis_json(x) for x in reviews],
   'ai_available':bool(os.getenv('OPENAI_API_KEY')) and os.getenv('PILOT_EPHEMERAL')!='1'}
 
 @router.post('/analyze')
