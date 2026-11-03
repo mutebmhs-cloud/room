@@ -96,3 +96,98 @@ $('#importFile').addEventListener('change',async e=>{const file=e.target.files[0
 window.addEventListener('beforeunload',e=>{if(S.dirtyProject||S.dirtySection||S.saving){e.preventDefault();e.returnValue=''}});
 
 $('#fountainFile').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{if(!S.project||S.project.kind!=='screenplay')throw Error('اختر مشروع سيناريو');if(file.size>500000)throw Error('ملف Fountain يتجاوز الحجم المسموح');if(!await flush())return;if(!confirm('ستُضاف المشاهد المستوردة إلى السيناريو الحالي دون حذف ما كتبته. متابعة؟'))return;const r=await api('/projects/'+S.pid+'/fountain/import',{method:'POST',body:JSON.stringify({text:await file.text()})});await loadProject(S.pid,'manuscript');toast('تمت إضافة '+r.added_scenes+' مشاهد')}catch(x){toast(x.message)}finally{e.target.value=''}});
+
+
+function saveProgressSoon(){
+ if(!S.pid||!['free','manuscript'].includes(S.tab))return;
+ clearTimeout(S.progressTimer);
+ const pid=S.pid,tab=S.tab,sid=S.sid,editing=document.activeElement;
+ const cursor=editing?.id===(tab==='free'?'scratch':'editorBody')?(editing.selectionStart||0):(S.lastCursor?.tab===tab&&S.lastCursor.sid===sid?S.lastCursor.offset:0);
+ S.progressTimer=setTimeout(async()=>{
+  if(S.pid!==pid||S.tab!==tab)return;
+  if(S.saving||S.dirtyProject||S.dirtySection){saveProgressSoon();return}
+  try{
+   const result=await api('/projects/'+pid+'/intelligence/progress',{method:'PUT',body:JSON.stringify({tab,section_id:sid||null,cursor_offset:cursor})});
+   if(S.pid===pid&&S.intel)S.intel.progress=result;
+  }catch(error){console.warn('Position save failed',error)}
+ },750);
+}
+async function resumeLocation(){
+ if(!S.pid)return;
+ const progress=S.intel?.progress||{};
+ const tab=progress.tab==='free'?'free':'manuscript';
+ if(progress.section_id&&S.sections.some(x=>x.id===progress.section_id))S.sid=progress.section_id;
+ await navigate(tab);
+ const field=tab==='free'?$('#scratch'):$('#editorBody');
+ if(field){const pos=Math.min(progress.cursor_offset||0,field.value.length);field.focus();field.setSelectionRange(pos,pos)}
+}
+function editSummary(){
+ const s=selected();if(!s){toast('أنشئ فصلًا أو مشهدًا أولاً');return}
+ const data=S.intel?.summaries?.[s.id]||{};
+ const input=(field,label,length)=>'<label>'+label+'<textarea name="'+field+'" maxlength="'+length+'">'+esc(data[field]||'')+'</textarea></label>';
+ modal('<h3>ملخص '+esc(s.title)+'</h3><p class="hint">ملخصك لا يغيّر المخطوط.</p><form id="summaryForm">'+input('summary','ملخص قصير',1200)+input('central_event','الحدث المحوري',600)+input('character_change','تطور الشخصية',600)+input('open_question','السؤال المفتوح',600)+'<button class="primary">حفظ الملخص</button> <button type="button" class="soft-btn" data-action="close-modal">إلغاء</button></form>');
+}
+async function saveSynopsis(form){
+ if(!await flush())throw Error('احفظ تغييرات النص قبل الملخص');
+ const section=selected();if(!section)throw Error('اختر الفصل');
+ const payload=Object.fromEntries(new FormData(form));
+ payload.section_version=section.version;
+ const data=await api('/projects/'+S.pid+'/intelligence/sections/'+section.id+'/summary',{method:'PUT',body:JSON.stringify(payload)});
+ S.intel.summaries[String(section.id)]=data;
+ closeModal();renderProject();toast('حُفظ الملخص');
+}
+async function runIntelligence(scope){
+ if(!S.pid)return;
+ if(!await flush()){toast('احفظ النص قبل التحليل');return}
+ if((scope==='section'||scope==='critique')&&!selected()){toast('اختر فصلًا أولاً');return}
+ if(!S.intel?.ai_available){toast('لم يُفعّل مزود التحليل الذكي بعد؛ يمكنك استخدام الملخص اليدوي.');return}
+ const name=scope==='project'?'أفكار المشروع الحرة':'نص الفصل المختار';
+ if(!confirm('سيُرسل '+name+' إلى مزود الذكاء الاصطناعي للتحليل. هل توافق؟'))return;
+ setStatus('التحليل قيد التنفيذ...');
+ try{
+  const data=await api('/projects/'+S.pid+'/intelligence/analyze',{method:'POST',body:JSON.stringify({scope,section_id:scope==='project'?null:S.sid,allow_ai_processing:true})});
+  S.intel.drafts.unshift(data);
+  showIntelligenceDraft(data);
+  setStatus('النتيجة جاهزة لمراجعتك');
+ }catch(error){setStatus('تعذّر التحليل',true);toast(error.message)}
+}
+function showIntelligenceDraft(draft){
+ const result=draft.result||{};
+ if(draft.scope==='project'){
+  const options=(result.fields||[]).map(f=>'<label class="checkrow"><input type="checkbox" class="suggest-field" value="'+esc(f.key)+'"><span><b>'+esc(FIELD_NAMES[f.key]||f.key)+'</b>: '+esc(f.value)+'<small style="display:block">'+(f.certainty==='explicit'?'مذكور صراحة':'استنتاج يحتاج تأكيدًا')+' — '+esc(f.evidence||'لا شاهد')+'</small></span></label>').join('');
+  modal('<h3>ماذا فهمت من أفكارك؟</h3><p class="hint">حدد فقط ما تريد اعتماده. يمكنك تعديل الحقول لاحقًا.</p>'+(options||'<p>لم أجد معلومات كافية للاستخلاص.</p>')+'<div class="btn-row"><button class="primary" data-action="apply-intelligence" data-id="'+draft.id+'">اعتماد المحدد</button><button class="soft-btn" data-action="dismiss-intelligence" data-id="'+draft.id+'">رفض النتائج</button></div>');
+ }else if(draft.scope==='section'){
+  modal('<h3>ملخص مقترح للفصل</h3><p>'+esc(result.summary||'')+'</p><p class="hint">الحدث: '+esc(result.central_event||'—')+'</p><p class="hint">التغيّر: '+esc(result.character_change||'—')+'</p><p class="hint">السؤال المفتوح: '+esc(result.open_question||'—')+'</p><button class="primary" data-action="apply-intelligence" data-id="'+draft.id+'">اعتماد الملخص</button> <button class="soft-btn" data-action="dismiss-intelligence" data-id="'+draft.id+'">رفض</button>');
+ }else{
+  const observations=(result.feedback||[]).map(x=>'<div class="card"><b>'+esc(x.observation)+'</b><p>شاهد من النص: '+esc(x.evidence)+'</p><p>الأثر المحتمل: '+esc(x.impact)+'</p><p>توجيه للكاتب: '+esc(x.action)+'</p></div>').join('');
+  modal('<h3>المراجعة الأدبية</h3><p class="hint">الملاحظات ليست أحكامًا نهائية، ويظل قرار الكاتب مستقلًا.</p>'+(observations||'<p>لم يتم العثور على ملاحظة مسندة.</p>')+'<button class="soft-btn" data-action="dismiss-intelligence" data-id="'+draft.id+'">إغلاق</button>');
+ }
+}
+async function applyIntelligence(id){
+ const draft=S.intel?.drafts?.find(x=>x.id===id);
+ if(!draft)return;
+ const fields=[...document.querySelectorAll('.suggest-field:checked')].map(x=>x.value);
+ if(draft.scope==='project'&&!fields.length){toast('اختر حقلًا واحدًا على الأقل');return}
+ const response=await api('/projects/'+S.pid+'/intelligence/analyses/'+id+'/apply',{method:'POST',body:JSON.stringify({selected_fields:fields})});
+ if(response.project){S.project=response.project;S.draftProject=structuredClone(response.project);S.projects=S.projects.map(p=>p.id===S.pid?{...p,title:response.project.title,premise:response.project.premise,version:response.project.version}:p)}
+ if(response.summary)S.intel.summaries[String(response.summary.section_id)]=response.summary;
+ S.intel.drafts=S.intel.drafts.filter(x=>x.id!==id);
+ closeModal();renderProject();toast('اعتُمدت المعلومات المحددة');
+}
+async function dismissIntelligence(id){
+ await api('/projects/'+S.pid+'/intelligence/analyses/'+id+'/dismiss',{method:'POST',body:'{}'});
+ S.intel.drafts=S.intel.drafts.filter(x=>x.id!==id);
+ closeModal();toast('لم تُعتمد النتائج');
+}
+document.addEventListener('keyup',event=>{
+ if(event.target.id==='editorBody'||event.target.id==='scratch'){
+  S.lastCursor={tab:S.tab,sid:S.sid,offset:event.target.selectionStart||0};
+  saveProgressSoon();
+ }
+});
+document.addEventListener('mouseup',event=>{
+ if(event.target.id==='editorBody'||event.target.id==='scratch'){
+  S.lastCursor={tab:S.tab,sid:S.sid,offset:event.target.selectionStart||0};
+  saveProgressSoon();
+ }
+});
