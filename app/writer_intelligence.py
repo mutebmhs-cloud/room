@@ -112,8 +112,8 @@ def source_for(db,user,pid,scope,section_id):
   return p,None,text
  if not section_id: raise HTTPException(422,'اختر الفصل أو المشهد')
  s=core.owned_section(db,user,pid,section_id)
- text=section_text(s).strip()
- if not text: raise HTTPException(422,'أدخل نص الفصل أو المشهد أولًا')
+ text=section_text(s)
+ if not text.strip(): raise HTTPException(422,'أدخل نص الفصل أو المشهد أولًا')
  return p,s,text
 
 def synopsis_json(row,sec=None):
@@ -176,14 +176,14 @@ async def generate_analysis(kind,scope,text):
    val=field.get('value'); evidence=field.get('evidence')
    if not isinstance(val,str) or not val.strip() or not isinstance(evidence,str):continue
    # Explicit claims must cite a substring of the source.
-   if field.get('certainty')=='explicit' and evidence.strip() not in text:continue
+   if field.get('certainty')=='explicit' and (not evidence.strip() or evidence.strip() not in text):continue
    cleaned.append({'key':field['key'],'value':val[:1600],
      'evidence':evidence[:350],'certainty':field.get('certainty','inferred')})
   feedback=[]
   for v in result['feedback'][:6]:
    if not isinstance(v,dict):continue
    if all(isinstance(v.get(k),str) for k in ('observation','evidence','impact','action')):
-    if v['evidence'].strip() not in text:continue
+    if not v['evidence'].strip() or v['evidence'].strip() not in text:continue
     feedback.append({k:v[k][:550] for k in ('observation','evidence','impact','action')})
   return {'fields':cleaned,'feedback':feedback,
    **{k:str(result.get(k,'') or '')[:1200 if k=='summary' else 600]
