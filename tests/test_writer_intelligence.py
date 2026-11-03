@@ -147,3 +147,44 @@ def test_export_import_retains_synopses_and_progress():
         assert next(iter(result['summaries'].values()))['summary']=='الشخصية تعود'
         assert result['progress']['cursor_offset']==8
         assert result['progress']['section_id']!=sid
+
+def test_synthetic_fault_dataset_covers_all_genres_and_controls():
+    import json
+    from pathlib import Path
+    cases=json.loads((Path(__file__).parent/'fixtures/literary_fault_cases.json').read_text(encoding='utf8'))['cases']
+    assert len(cases)>=15
+    for kind in ['novel','short','flash','children','screenplay']:
+        selected=[x for x in cases if x['kind']==kind]
+        assert len(selected)>=3 and any(x['clean'] for x in selected) and any(not x['clean'] for x in selected)
+        assert len({x['id'] for x in selected})==len(selected)
+        assert all(isinstance(x['text'],str) and len(x['text'])>70 for x in selected)
+
+def test_literary_adapter_filters_invented_evidence_even_if_inferred(monkeypatch):
+    import asyncio,json
+    from app import writer_intelligence as literary
+    monkeypatch.setenv('OPENAI_API_KEY','synthetic-test-only-no-external-network')
+    monkeypatch.delenv('PILOT_EPHEMERAL',raising=False)
+    payload={'fields':[
+       {'key':'protagonist','value':'مريم','evidence':'مريم','certainty':'explicit'},
+       {'key':'vision','value':'قصة خيالية','evidence':'معلومة لا توجد في النص','certainty':'inferred'}],
+       'summary':'','central_event':'','character_change':'','open_question':'',
+       'feedback':[{'observation':'التناقض الأول','evidence':'أحمد','impact':'التباس','action':'تحقق من الاتساق'},
+                   {'observation':'تشخيص مخترع','evidence':'شاهد غير موجود','impact':'مشكل','action':'تراجع'}]}
+    class FakeResponse:
+       status_code=200
+       def json(self):
+           return {'output':[{'type':'message','content':[{'type':'output_text','text':json.dumps(payload,ensure_ascii=False)}]}]}
+    class FakeClient:
+       def __init__(self,**kwargs):pass
+       async def __aenter__(self):return self
+       async def __aexit__(self,*args):pass
+       async def post(self,*args,**kwargs):return FakeResponse()
+    monkeypatch.setattr(literary.httpx,'AsyncClient',FakeClient)
+    for kind in ['novel','short','flash','children','screenplay']:
+       output=asyncio.run(literary.generate_analysis(kind,'critique','أحمد يتحدث مع مريم.'))
+       assert len(output['fields'])==1,kind
+       assert output['fields'][0]['key']=='protagonist'
+       assert len(output['feedback'])==1,kind
+       assert output['feedback'][0]['observation']=='التناقض الأول'
+       # These are deliberately FAKE model outputs: evidence filtering is tested,
+       # actual error detection by an LLM is NOT verified here.
