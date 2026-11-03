@@ -209,3 +209,32 @@ document.addEventListener('mouseup',event=>{
   saveProgressSoon();
  }
 });
+
+
+function scheduleAutoUnderstanding(){
+ clearTimeout(S.autoTimer);
+ if(!S.autoUnderstand||!S.pid||!S.intel?.ai_available)return;
+ S.autoTimer=setTimeout(async()=>{
+  if(!S.autoUnderstand||!S.pid)return;
+  if(S.saving||S.dirtyProject||S.dirtySection){scheduleAutoUnderstanding();return}
+  const source=(S.project?.scratchpad||'').trim(),pid=S.pid;
+  if(!source||source===S.lastAutoText)return;
+  const cooldown=30000-(Date.now()-S.lastAutoRequest);
+  if(cooldown>0){S.autoTimer=setTimeout(scheduleAutoUnderstanding,cooldown);return}
+  S.lastAutoRequest=Date.now();
+  const status=$('#autoUnderstandStatus');
+  if(status)status.textContent='يجري فهم الأفكار المحفوظة، ويمكنك متابعة الكتابة.';
+  try{
+   const result=await api('/projects/'+pid+'/intelligence/analyze',{method:'POST',body:JSON.stringify({scope:'project',allow_ai_processing:true})});
+   if(S.pid!==pid)return;
+   S.lastAutoText=source;
+   S.intel.drafts.unshift(result);
+   const target=$('#autoUnderstandStatus');
+   if(target)target.innerHTML='<p class="hint">لديك اقتراحات جديدة تنتظر مراجعتك.</p><button class="soft-btn" data-action="show-intelligence" data-id="'+result.id+'">مراجعة ما فهمته المنصة</button>';
+   toast('اكتمل تحليل أفكارك. لم تُعتمد أي معلومة دون إذنك.');
+  }catch(error){
+   if(S.pid!==pid)return;
+   const target=$('#autoUnderstandStatus');if(target)target.textContent='لم يكتمل التحليل التلقائي: '+error.message;
+  }
+ },1600);
+}
