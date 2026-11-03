@@ -130,6 +130,8 @@ def run():
                 raw.goto(BASE+'/',wait_until='domcontentloaded')
                 expect(raw.locator('#authForm')).to_be_visible()
                 expect(raw.locator('#password')).to_be_visible()
+                expect(raw.locator('#authSubmit')).to_be_visible()
+                expect(raw.locator('#authSubmit')).to_be_disabled()
                 expect(raw.locator('#email')).to_be_hidden()
                 record('login form visible without JavaScript')
                 nojs.close()
