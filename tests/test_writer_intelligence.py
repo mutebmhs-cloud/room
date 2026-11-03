@@ -110,3 +110,35 @@ def test_consent_review_stale_and_ownership(monkeypatch):
         stale=request(a,'POST',f"/api/projects/{pid}/intelligence/analyses/{second['id']}/apply",ac,
                       {'selected_fields':['protagonist']})
         assert stale.status_code==409
+
+def test_export_import_retains_synopses_and_progress():
+    with TestClient(app) as c:
+        csrf=create_author(c)
+        p=request(c,'POST','/api/projects',csrf,{'title':'تصدير ذكي','kind':'screenplay'}).json()
+        pid=p['id']
+        section=request(c,'POST',f'/api/projects/{pid}/sections',csrf,{'title':'مشهد العودة'}).json()
+        sid=section['id']
+        revised=request(c,'PUT',f'/api/projects/{pid}/sections/{sid}',csrf,
+                       {'version':1,'title':'مشهد العودة','body':'عودة آمنة','blocks':[]})
+        assert revised.status_code==200
+        summary=request(c,'PUT',f'/api/projects/{pid}/intelligence/sections/{sid}/summary',csrf,
+                        {'section_version':2,'summary':'الشخصية تعود','central_event':'العودة'})
+        assert summary.status_code==200
+        point=request(c,'PUT',f'/api/projects/{pid}/intelligence/progress',csrf,
+                      {'tab':'manuscript','section_id':sid,'cursor_offset':8})
+        assert point.status_code==200
+        backup=c.get(f'/api/projects/{pid}/export')
+        assert backup.status_code==200
+        data=backup.json()
+        assert data['synopses'][0]['summary']=='الشخصية تعود'
+        assert data['progress']['section_id']==sid
+        imported=request(c,'POST','/api/import',csrf,{'data':data})
+        assert imported.status_code==200,imported.text
+        new_id=imported.json()['id']
+        i=c.get(f'/api/projects/{new_id}/intelligence')
+        assert i.status_code==200,i.text
+        result=i.json()
+        assert len(result['summaries'])==1
+        assert next(iter(result['summaries'].values()))['summary']=='الشخصية تعود'
+        assert result['progress']['cursor_offset']==8
+        assert result['progress']['section_id']!=sid
