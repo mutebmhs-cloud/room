@@ -26,10 +26,11 @@ function tabs(){const ts=[['overview','نظرة عامة'],['free','أفكار �
 async function loadProject(pid,tab='overview'){
  if(S.opening)return;
  if(!await flush())return;
+ await persistProgressNow();
  S.opening=true;setStatus('جارٍ فتح العمل...');
  try{
   const [d,intel]=await Promise.all([api('/projects/'+pid),api('/projects/'+pid+'/intelligence')]);
-  S.pid=pid;S.project=d.project;S.sections=d.sections;S.facts=d.facts;S.intel=intel;
+  S.pid=pid;S.project=d.project;S.sections=d.sections;S.facts=d.facts;S.intel=intel;S.lastCursor=null;
   S.draftProject=structuredClone(d.project);S.draftSection=null;
   S.sid=intel.progress?.section_id&&d.sections.some(x=>x.id===intel.progress.section_id)?intel.progress.section_id:d.sections[0]?.id||null;
   S.tab=tab;S.view='workspace';S.dirtyProject=false;S.dirtySection=false;S.invalid=false;
