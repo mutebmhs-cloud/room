@@ -72,7 +72,8 @@ async def protect(request, call_next):
     resp.headers['Permissions-Policy']='camera=(), microphone=(), geolocation=()'
     resp.headers['Content-Security-Policy']="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
     if IS_PROD: resp.headers['Strict-Transport-Security']='max-age=31536000; includeSubDomains'
-    if request.url.path.startswith('/api/'): resp.headers['Cache-Control']='no-store'
+    if request.url.path.startswith('/api/') or request.url.path in ('/', '/admin'):
+        resp.headers['Cache-Control']='no-store'
     return resp
 
 app.mount('/static',StaticFiles(directory=ROOT/'static'),name='static')
