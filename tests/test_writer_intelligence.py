@@ -51,7 +51,7 @@ def test_summary_progress_and_three_revisions(monkeypatch):
                       {'version':version,'title':'فصل تجريبي','body':'ملاحظة مصطنعة رقم '+str(version),'blocks':[]})
             assert r.status_code==200,r.text
         versions=c.get(f'/api/projects/{pid}/sections/{sid}/revisions').json()
-        assert [v['version'] for v in versions]==[5,4,3]
+        assert [v['version'] for v in versions]==[6,5,4]
         summary=request(c,'PUT',f'/api/projects/{pid}/intelligence/sections/{sid}/summary',
                         csrf,{'section_version':7,'summary':'ملخص مستقل للفصل','central_event':'رسالة'})
         assert summary.status_code==200,summary.text
