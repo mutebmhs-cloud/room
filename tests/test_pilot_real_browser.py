@@ -72,12 +72,18 @@ def create_work(page,kind,label):
     page.locator('#scratch').fill('تجربة مصطنعة للنوع '+label)
     page.locator('[data-action=save-project]').first.click()
     page.wait_for_timeout(350)
-    expect(page.locator('#scratch')).to_contain_text('تجربة مصطنعة')
+    expect(page.locator('#scratch')).to_have_value('تجربة مصطنعة للنوع '+label)
+    # Reopen the writer's persisted project after a full browser reload.
+    page.reload(wait_until='domcontentloaded')
+    expect(page.locator('#newProject')).to_be_visible(timeout=12000)
+    page.locator('#projectNav .project-link').filter(has_text=label).first.click()
+    page.locator('[data-tab=free]').first.click()
+    expect(page.locator('#scratch')).to_have_value('تجربة مصطنعة للنوع '+label)
     page.locator('[data-tab=manuscript]').first.click()
     page.once('dialog',lambda d:d.accept('مقطع تجريبي'))
     page.locator('[data-action=new-section]').first.click()
     if kind=='screenplay':
-        expect(page.locator('#blockList')).to_be_visible()
+        expect(page.locator('#blockList')).to_be_attached()
         page.locator('[data-action=add-block]').first.click()
         page.locator('[data-block-type="0"]').select_option('dialogue')
         page.locator('[data-block-text="0"]').fill('حوار مصطنع للفحص.')
@@ -92,7 +98,11 @@ def create_work(page,kind,label):
     page.locator('[data-tab=coach]').first.click()
     expect(page.get_by_text('مدربك الشخصي').first).to_be_visible()
     record('complete writing/editing path: '+kind)
-    page.locator('[data-action=view][data-view=home]').first.click()
+    if page.locator('#modalOverlay').count():
+        raise AssertionError('Unexpected modal after saved work for '+kind+': '+page.locator('#modalOverlay').inner_text()[:1200])
+    page.locator('[data-action=view][data-view=home]').first.click(timeout=6000)
+    if page.locator('#modalOverlay').count():
+        raise AssertionError('Navigation blocked for '+kind+': '+page.locator('#modalOverlay').inner_text()[:1200])
     expect(page.locator('#newProject')).to_be_visible()
 
 def run():

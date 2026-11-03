@@ -100,3 +100,41 @@ def test_issued_codes_are_alphanumeric_and_contain_both_types(pilot_setup):
             codes=[pilot.new_access_code(db) for _ in range(200)]
         assert len(set(codes))==200
         assert all(len(c)==10 and c.isascii() and c.isalnum() and any(x.isdigit() for x in c) and any(x.isalpha() for x in c) for c in codes)
+
+
+def test_admin_recovery_rotates_existing_code_without_removing_writers(pilot_setup, monkeypatch):
+    from app.main import _attempts
+    from sqlalchemy import select
+    from app.models import User
+    _attempts.clear()
+    replacement='Recovered-Admin-Only-2026-Synthetic-Code-987654321'
+    with TestClient(app) as admin, TestClient(app) as old_session, TestClient(app) as writer:
+        initial=admin.post('/api/pilot/login',json={'access_code':pilot_setup})
+        assert initial.status_code==200, initial.text
+        csrf=initial.json()['csrf']
+        created=api_post(admin,'/api/pilot/admin/writers',csrf,{'display_name':'كاتب قبل استعادة المدير'})
+        assert created.status_code==200,created.text
+        writer_code=created.json()['access_code']
+        writer_login=writer.post('/api/pilot/login',json={'access_code':writer_code,'consent':True})
+        assert writer_login.status_code==200,writer_login.text
+        before=admin.get('/api/pilot/admin/writers').json()
+        with SessionLocal() as db:
+            original=db.scalar(select(pilot.PilotAccess).where(pilot.PilotAccess.role=='admin'))
+            original_id=original.user_id
+        monkeypatch.setenv('PILOT_ADMIN_RESET_CODE',replacement)
+        pilot.bootstrap_pilot()
+        # A stale administrative session is invalidated immediately.
+        assert admin.get('/api/auth/me').status_code==401
+        assert admin.post('/api/pilot/login',json={'access_code':pilot_setup}).status_code==401
+        login=admin.post('/api/pilot/login',json={'access_code':replacement})
+        assert login.status_code==200,login.text
+        assert login.json()['role']=='admin'
+        assert len(admin.get('/api/pilot/admin/writers').json())==len(before)
+        assert writer.get('/api/auth/me').status_code==200
+        with SessionLocal() as db:
+            recovered=db.scalar(select(pilot.PilotAccess).where(pilot.PilotAccess.role=='admin'))
+            assert recovered.user_id==original_id
+            assert db.get(User,original_id) is not None
+        # Repeated application of same recovery code must preserve the current session.
+        pilot.bootstrap_pilot()
+        assert admin.get('/api/auth/me').status_code==200
