@@ -124,6 +124,14 @@ def run():
                 writer=browser.new_context(viewport={'width':1280,'height':920},locale='ar-SA')
                 m=manager.new_page();w=writer.new_page()
                 check_errors('manager',m);check_errors('writer',w)
+                # The login form must remain visible before JavaScript runs.
+                with browser.new_context(viewport={'width':1365,'height':830}) as nojs:
+                    raw=nojs.new_page(java_script_enabled=False)
+                    raw.goto(BASE+'/',wait_until='domcontentloaded')
+                    expect(raw.locator('#authForm')).to_be_visible()
+                    expect(raw.locator('#password')).to_be_visible()
+                    expect(raw.locator('#email')).to_be_hidden()
+                    record('login form visible without JavaScript')
                 login_admin(m)
                 access=make_writer(m,'writertrial01')
                 m.screenshot(path=str(OUT/'manager.png'),full_page=True)
