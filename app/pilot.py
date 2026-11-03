@@ -68,7 +68,19 @@ def require_admin(db,user):
 def bootstrap_pilot():
     if not PILOT_MODE: return
     with SessionLocal() as db:
-        if db.scalar(select(PilotAccess).where(PilotAccess.role=='admin')): return
+        # Explicit recovery path for an already-created administrator.
+        # Never rotate credentials during a routine restart.
+        existing=db.scalar(select(PilotAccess).where(PilotAccess.role=='admin'))
+        reset_code=os.getenv('PILOT_ADMIN_RESET_CODE','').strip()
+        if reset_code:
+            if len(reset_code)<32:
+                raise RuntimeError('PILOT_ADMIN_RESET_CODE must have at least 32 characters')
+            if existing and existing.code_hash!=digest(reset_code):
+                existing.code_hash=digest(reset_code)
+                existing.enabled=True
+                db.execute(delete(LoginSession).where(LoginSession.user_id==existing.user_id))
+                db.commit()
+        if existing: return
         name=os.getenv('PILOT_ADMIN_USERNAME','pilot-admin').strip().lower()
         if not USERNAME_RE.fullmatch(name): raise RuntimeError('Invalid pilot admin username')
         code=os.getenv('PILOT_ADMIN_CODE') or secrets.token_urlsafe(36)
