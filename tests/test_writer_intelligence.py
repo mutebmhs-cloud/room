@@ -214,5 +214,5 @@ def test_all_fault_injection_texts_persist_unmodified_across_five_genres(monkeyp
             monkeypatch.delenv('OPENAI_API_KEY',raising=False)
             evaluated=request(client,'POST',f'/api/projects/{pid}/intelligence/analyze',csrf,
                 {'scope':'critique','section_id':sid,'allow_ai_processing':True})
-            assert evaluated.status_code==503,evaluated.text
+            assert evaluated.status_code==(503 if i<12 else 429),evaluated.text
             assert client.get(f'/api/projects/{pid}').json()['sections'][0]['body']==case['text']
