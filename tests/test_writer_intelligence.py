@@ -188,3 +188,31 @@ def test_literary_adapter_filters_invented_evidence_even_if_inferred(monkeypatch
        assert output['feedback'][0]['observation']=='التناقض الأول'
        # These are deliberately FAKE model outputs: evidence filtering is tested,
        # actual error detection by an LLM is NOT verified here.
+
+def test_all_fault_injection_texts_persist_unmodified_across_five_genres(monkeypatch):
+    import json
+    from pathlib import Path
+    cases=json.loads((Path(__file__).parent/'fixtures/literary_fault_cases.json').read_text(encoding='utf8'))['cases']
+    with TestClient(app) as client:
+        csrf=create_author(client)
+        for i,case in enumerate(cases):
+            title='تجربة تناقض مصطنع '+str(i)+' '+case['kind']
+            project=request(client,'POST','/api/projects',csrf,{'title':title,'kind':case['kind']})
+            assert project.status_code==200,project.text
+            pid=project.json()['id']
+            section=request(client,'POST',f'/api/projects/{pid}/sections',csrf,{'title':'نص تجريبي'})
+            assert section.status_code==200,section.text
+            sid=section.json()['id']
+            saved=request(client,'PUT',f'/api/projects/{pid}/sections/{sid}',csrf,
+                {'title':'نص تجريبي','version':1,'body':case['text'],'blocks':[]})
+            assert saved.status_code==200,saved.text
+            reopened=client.get(f'/api/projects/{pid}')
+            assert reopened.status_code==200
+            assert reopened.json()['sections'][0]['body']==case['text']
+            # Even if the writer agrees, an unconfigured AI provider cannot
+            # manufacture literary judgments or silently mutate the writing.
+            monkeypatch.delenv('OPENAI_API_KEY',raising=False)
+            evaluated=request(client,'POST',f'/api/projects/{pid}/intelligence/analyze',csrf,
+                {'scope':'critique','section_id':sid,'allow_ai_processing':True})
+            assert evaluated.status_code==503,evaluated.text
+            assert client.get(f'/api/projects/{pid}').json()['sections'][0]['body']==case['text']
