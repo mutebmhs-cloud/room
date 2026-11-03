@@ -30,7 +30,7 @@ async function loadProject(pid,tab='overview'){
  S.opening=true;setStatus('جارٍ فتح العمل...');
  try{
   const [d,intel]=await Promise.all([api('/projects/'+pid),api('/projects/'+pid+'/intelligence')]);
-  S.pid=pid;S.project=d.project;S.sections=d.sections;S.facts=d.facts;S.intel=intel;S.lastCursor=null;S.autoUnderstand=false;S.lastAutoText=null;clearTimeout(S.autoTimer);
+  S.pid=pid;S.project=d.project;S.sections=d.sections;S.facts=d.facts;S.intel=intel;S.lastCursor=intel.progress?{tab:intel.progress.tab,sid:intel.progress.section_id,offset:intel.progress.cursor_offset||0}:null;S.autoUnderstand=false;S.lastAutoText=null;clearTimeout(S.autoTimer);
   S.draftProject=structuredClone(d.project);S.draftSection=null;
   S.sid=intel.progress?.section_id&&d.sections.some(x=>x.id===intel.progress.section_id)?intel.progress.section_id:d.sections[0]?.id||null;
   S.tab=tab;S.view='workspace';S.dirtyProject=false;S.dirtySection=false;S.invalid=false;
@@ -134,6 +134,7 @@ async function resumeLocation(){
  const progress=S.intel?.progress||{};
  const tab=progress.tab==='free'?'free':'manuscript';
  if(progress.section_id&&S.sections.some(x=>x.id===progress.section_id))S.sid=progress.section_id;
+ S.lastCursor={tab,sid:S.sid,offset:progress.cursor_offset||0};
  await navigate(tab);
  const field=tab==='free'?$('#scratch'):$('#editorBody');
  if(field){const pos=Math.min(progress.cursor_offset||0,field.value.length);field.focus();field.setSelectionRange(pos,pos)}
