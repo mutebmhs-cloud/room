@@ -1,7 +1,7 @@
 import os, re, secrets
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, select, delete
+from pydantic import BaseModel, Field, ConfigDict
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, select, delete, text
 from sqlalchemy.orm import Session
 from .db import Base, SessionLocal, get_db
 from .models import User, Project, Section, Chat, Session as LoginSession, now
@@ -34,13 +34,24 @@ class AdminAccessLog(Base):
     viewed_at=Column(DateTime(timezone=True),default=now,nullable=False)
 
 class PilotLogin(BaseModel):
-    username:str=Field(min_length=3,max_length=32)
-    access_code:str=Field(min_length=32,max_length=160)
+    model_config=ConfigDict(str_strip_whitespace=True)
+    access_code:str=Field(min_length=10,max_length=160)
     consent:bool=False
 
 class CreateWriter(BaseModel):
-    username:str=Field(min_length=3,max_length=32)
+    model_config=ConfigDict(str_strip_whitespace=True)
     display_name:str=Field(min_length=2,max_length=80)
+
+def new_access_code(db):
+    # Serialize issuance across workers so collision checking is atomic on PostgreSQL.
+    if db.bind.dialect.name=='postgresql':
+        db.execute(text('SELECT pg_advisory_xact_lock(72419201)'))
+    alphabet='ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+    for _ in range(20):
+        code=''.join(secrets.choice(alphabet) for _ in range(10))
+        if not any(c.isdigit() for c in code) or not any(c.isalpha() for c in code): continue
+        if not db.scalar(select(PilotAccess.id).where(PilotAccess.code_hash==digest(code))): return code
+    raise HTTPException(503,'تعذر إصدار رمز؛ حاول مجددًا')
 
 def require_mode():
     if not PILOT_MODE: raise HTTPException(404,'المسار غير متاح')
@@ -76,31 +87,30 @@ def pilot_status():
 @router.post('/login')
 def login_pilot(data:PilotLogin,request:Request,response:Response,db:Session=Depends(get_db)):
     require_mode()
-    username=data.username.strip().lower()
-    core.throttle('pilot-login:'+request.client.host+':'+username,limit=7,window=900)
-    entry=db.scalar(select(PilotAccess).where(PilotAccess.username==username)) if USERNAME_RE.fullmatch(username) else None
-    if not entry or not entry.enabled or not secrets.compare_digest(entry.code_hash,digest(data.access_code)):
-        raise HTTPException(401,'اسم المستخدم أو رمز الدعوة غير صحيح')
+    core.throttle('pilot-login-ip:'+request.client.host,limit=7,window=900)
+    code=data.access_code.strip()
+    entries=db.scalars(select(PilotAccess).where(PilotAccess.code_hash==digest(code),PilotAccess.enabled.is_(True))).all()
+    if len(entries)!=1:
+        raise HTTPException(401,'رمز الدخول غير صحيح أو غير فعال')
+    entry=entries[0]
     if entry.role=='writer' and not data.consent:
         raise HTTPException(422,'يجب الموافقة على إشعار مراجعة الإدارة للأعمال التجريبية')
     if entry.role=='writer' and entry.review_consent_at is None:
         entry.review_consent_at=now();db.commit()
     result=core.login_session(db,db.get(User,entry.user_id),response)
-    return {**result,'username':entry.username,'role':entry.role,'pilot':True}
+    return {**result,'display_name':entry.display_name,'username':entry.username,'role':entry.role,'pilot':True}
 
 @router.post('/admin/writers')
 def create_writer(data:CreateWriter,user:User=Depends(core.auth),db:Session=Depends(get_db)):
     require_admin(db,user)
-    name=data.username.strip().lower()
-    if not USERNAME_RE.fullmatch(name): raise HTTPException(422,'اسم المستخدم غير صالح')
-    if not data.display_name.strip(): raise HTTPException(422,'الاسم المعروض فارغ')
-    if db.scalar(select(PilotAccess).where(PilotAccess.username==name)):raise HTTPException(409,'اسم المستخدم محجوز')
-    code=secrets.token_urlsafe(36)
+    name='writer-'+secrets.token_hex(10)
+    if not data.display_name.strip(): raise HTTPException(422,'اسم الكاتب مطلوب')
+    code=new_access_code(db)
     account=User(email=f'pilot-writer-{secrets.token_hex(12)}@pilot.invalid',password_hash=hash_password.hash(secrets.token_urlsafe(48)))
     db.add(account);db.flush()
     db.add(PilotAccess(user_id=account.id,username=name,display_name=data.display_name.strip(),code_hash=digest(code),role='writer',enabled=True))
     db.commit()
-    return {'username':name,'access_code':code,'note':'احفظ الرمز الآن؛ لن يعرض مجددًا'}
+    return {'display_name':data.display_name.strip(),'username':name,'access_code':code,'note':'احفظ الرمز الآن؛ لن يعرض مجددًا'}
 
 @router.get('/admin/writers')
 def list_writers(user:User=Depends(core.auth),db:Session=Depends(get_db)):
@@ -117,11 +127,11 @@ def rotate(eid:int,user:User=Depends(core.auth),db:Session=Depends(get_db)):
     require_admin(db,user)
     entry=db.get(PilotAccess,eid)
     if not entry or entry.role!='writer':raise HTTPException(404,'الكاتب غير موجود')
-    code=secrets.token_urlsafe(36)
+    code=new_access_code(db)
     entry.code_hash=digest(code)
     db.execute(delete(LoginSession).where(LoginSession.user_id==entry.user_id))
     db.commit()
-    return {'username':entry.username,'access_code':code}
+    return {'display_name':entry.display_name,'username':entry.username,'access_code':code}
 
 @router.post('/admin/writers/{eid}/toggle')
 def toggle(eid:int,user:User=Depends(core.auth),db:Session=Depends(get_db)):
@@ -192,5 +202,5 @@ def submit_feedback(data:SubmitFeedback,user:User=Depends(core.auth),db:Session=
 def review_feedback(user:User=Depends(core.auth),db:Session=Depends(get_db)):
     require_admin(db,user)
     rows=db.scalars(select(PilotFeedback).order_by(PilotFeedback.id.desc()).limit(200)).all()
-    usernames={r.user_id:r.username for r in db.scalars(select(PilotAccess).where(PilotAccess.role=='writer'))}
+    usernames={r.user_id:r.display_name for r in db.scalars(select(PilotAccess).where(PilotAccess.role=='writer'))}
     return [{'id':x.id,'username':usernames.get(x.writer_user_id,'writer'),'subject':x.subject,'detail':x.detail,'category':x.category,'created_at':x.created_at.isoformat()} for x in rows]

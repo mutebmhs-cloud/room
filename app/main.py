@@ -214,7 +214,7 @@ def me(request:Request,db:OrmSession=Depends(get_db)):
     csrf=csrf_for_session(request.cookies.get(COOKIE_NAME,''))
     from .pilot import pilot_entry
     entry=pilot_entry(db,user)
-    return {'email':user.email,'username':entry.username if entry else None,'role':entry.role if entry else 'writer', 'pilot':bool(entry), 'csrf':csrf,'ai_available':bool(os.getenv('OPENAI_API_KEY')) and os.getenv('PILOT_EPHEMERAL')!='1'}
+    return {'email':user.email,'display_name':entry.display_name if entry else None,'username':entry.username if entry else None,'role':entry.role if entry else 'writer', 'pilot':bool(entry), 'csrf':csrf,'ai_available':bool(os.getenv('OPENAI_API_KEY')) and os.getenv('PILOT_EPHEMERAL')!='1'}
 
 @app.post('/api/auth/logout')
 def logout(request:Request,response:Response,user:User=Depends(auth),db:OrmSession=Depends(get_db)):

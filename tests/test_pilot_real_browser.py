@@ -32,7 +32,7 @@ def check_errors(label, page):
 def login_admin(page):
     page.goto(BASE+'/',wait_until='domcontentloaded')
     expect(page.locator('#pilotConsentWrap')).to_be_visible(timeout=10000)
-    page.locator('#email').fill('test-admin')
+    expect(page.locator('#email')).to_be_hidden()
     page.locator('#password').fill(ADMIN_CODE)
     page.locator('#authSubmit').click()
     expect(page).to_have_url(BASE+'/admin',timeout=15000)
@@ -40,20 +40,20 @@ def login_admin(page):
     record('manager login and dashboard navigation')
 
 def make_writer(manager,username):
-    manager.locator('#newWriter input[name=username]').fill(username)
+    assert manager.locator('#newWriter input').count()==1
     manager.locator('#newWriter input[name=display_name]').fill('كاتب تجريبي')
     manager.locator('#newWriter button.primary').click()
     expect(manager.locator('#issued')).to_be_visible()
     code=manager.locator('#issued code').inner_text().strip()
-    assert len(code)>=32
-    expect(manager.get_by_text(username,exact=False).first).to_be_visible()
+    assert len(code)==10 and code.isalnum()
+    expect(manager.get_by_text('كاتب تجريبي',exact=True).first).to_be_visible()
     record('manager creates individualized invite')
     return code
 
 def login_writer(page,username,access):
     page.goto(BASE+'/',wait_until='domcontentloaded')
     expect(page.locator('#pilotConsentWrap')).to_be_visible(timeout=10000)
-    page.locator('#email').fill(username)
+    expect(page.locator('#email')).to_be_hidden()
     page.locator('#password').fill(access)
     page.locator('#reviewConsent').check()
     page.locator('#authSubmit').click()
