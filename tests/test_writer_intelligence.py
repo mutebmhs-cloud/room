@@ -27,6 +27,9 @@ def test_duplicate_project_and_compact_catalog():
         same=request(c,'POST','/api/projects',csrf,{'title':'رسالة القطار','kind':'novel'})
         assert same.status_code==200,same.text
         assert same.json()['id']==one.json()['id'] and same.json()['reused'] is True
+        for _ in range(10):
+            repeated=request(c,'POST','/api/projects',csrf,{'title':'رسالة القطار','kind':'novel'})
+            assert repeated.status_code==200 and repeated.json()['id']==one.json()['id']
         other=request(c,'POST','/api/projects',csrf,{'title':'رسالة القطار','kind':'short'})
         assert other.status_code==200 and other.json()['id']!=one.json()['id']
         p=one.json()
@@ -52,6 +55,8 @@ def test_summary_progress_and_three_revisions(monkeypatch):
             assert r.status_code==200,r.text
         versions=c.get(f'/api/projects/{pid}/sections/{sid}/revisions').json()
         assert [v['version'] for v in versions]==[6,5,4]
+        assert request(c,'POST',f'/api/projects/{pid}/sections/{sid}/restore',csrf,
+                       {'current_version':7,'target_version':1}).status_code==404
         summary=request(c,'PUT',f'/api/projects/{pid}/intelligence/sections/{sid}/summary',
                         csrf,{'section_version':7,'summary':'ملخص مستقل للفصل','central_event':'رسالة'})
         assert summary.status_code==200,summary.text
