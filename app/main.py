@@ -426,13 +426,19 @@ async def chat(pid:int,data:ChatRequest,request:Request,user:User=Depends(auth),
 @app.get('/api/projects/{pid}/export')
 def export_project(pid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     p=owned_project(db,user,pid)
+    from .writer_intelligence import SectionSynopsis, progress_json
     sections=db.scalars(select(Section).where(Section.project_id==pid).order_by(Section.position,Section.id)).all()
+    synopses=db.scalars(select(SectionSynopsis).where(SectionSynopsis.project_id==pid)).all()
     return {'format':'writer-cloud-v2','project':{**proj_json(p),'kind':p.kind},
             'sections':[sec_json(x) for x in sections],
             'facts':[fact_json(x,{s.id:s.version for s in sections}) for x in db.scalars(select(Fact).where(Fact.project_id==pid))],
             'revisions':[{'section_id':r.section_id,'version':r.version,'title':r.title,'body':r.body,'blocks':_json(r.blocks,[])}
                          for r in db.scalars(select(Revision).where(Revision.section_id.in_([a.id for a in sections])).order_by(Revision.section_id,Revision.version))],
-            'chats':[{'role':x.role,'text':x.text,'proposals':_json(x.proposals,[])} for x in db.scalars(select(Chat).where(Chat.project_id==pid).order_by(Chat.id))]}
+            'chats':[{'role':x.role,'text':x.text,'proposals':_json(x.proposals,[])} for x in db.scalars(select(Chat).where(Chat.project_id==pid).order_by(Chat.id))],
+            'synopses':[{'section_id':x.section_id,'summary':x.summary,'central_event':x.central_event,
+                         'character_change':x.character_change,'open_question':x.open_question,
+                         'source_hash':x.source_hash,'origin':x.origin} for x in synopses],
+            'progress':progress_json(db,pid)}
 
 class ImportData(BaseModel):
     model_config=ConfigDict(extra='forbid')
@@ -445,7 +451,9 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
     if fmt not in ('writer-cloud-v1','writer-cloud-v2') or not isinstance(raw.get('project'),dict) or not isinstance(raw.get('sections'),list) or not isinstance(raw.get('facts'),list): raise HTTPException(422,'صيغة النسخة الاحتياطية غير صالحة')
     revs=raw.get('revisions',[]) if fmt=='writer-cloud-v2' else []
     chats=raw.get('chats',[]) if fmt=='writer-cloud-v2' else []
-    if not isinstance(revs,list) or len(revs)>10000 or not isinstance(chats,list) or len(chats)>3000: raise HTTPException(422,'عدد سجلات النسخة الاحتياطية غير صالح')
+    synopses=raw.get('synopses',[]) if fmt=='writer-cloud-v2' else []
+    progress=raw.get('progress',None) if fmt=='writer-cloud-v2' else None
+    if not isinstance(revs,list) or len(revs)>10000 or not isinstance(chats,list) or len(chats)>3000 or not isinstance(synopses,list) or len(synopses)>400: raise HTTPException(422,'عدد سجلات النسخة الاحتياطية غير صالح')
     if len(json.dumps(raw,ensure_ascii=False).encode('utf-8'))>30_000_000: raise HTTPException(413,'النسخة الاحتياطية كبيرة جدًا')
     proj=raw['project']; kind=proj.get('kind')
     if kind not in KINDS or not isinstance(proj.get('title'),str) or not (1<=len(proj['title'])<=240) or not proj['title'].strip() or len(raw['sections'])>400 or len(raw['facts'])>3000: raise HTTPException(422,'بيانات المشروع غير صالحة')
@@ -474,6 +482,22 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
             checked_revisions.add(identity)
             if not isinstance(rev.get('title'),str) or not 1<=len(rev['title'])<=240 or not rev['title'].strip() or not isinstance(rev.get('body'),str) or len(rev['body'])>450000 or not isinstance(rev.get('blocks'),list): raise ValueError('revision')
             validate_blocks(rev['blocks'])
+        synopsis_ids=set()
+        for synopsis in synopses:
+            if not isinstance(synopsis,dict) or synopsis.get('section_id') not in version_map:
+                raise ValueError('synopsis source')
+            if synopsis['section_id'] in synopsis_ids: raise ValueError('duplicate synopsis')
+            synopsis_ids.add(synopsis['section_id'])
+            for key,limit in [('summary',1200),('central_event',600),('character_change',600),('open_question',600)]:
+                if not isinstance(synopsis.get(key,''),str) or len(synopsis.get(key,''))>limit:
+                    raise ValueError('synopsis length')
+            if not isinstance(synopsis.get('source_hash',''),str) or len(synopsis.get('source_hash',''))>64:
+                raise ValueError('synopsis fingerprint')
+        if progress is not None:
+            if (not isinstance(progress,dict) or progress.get('tab') not in {'free','manuscript','structure','overview','checkpoint'} or
+               progress.get('section_id') is not None and progress['section_id'] not in version_map or
+               type(progress.get('cursor_offset',0)) is not int or not 0<=progress.get('cursor_offset',0)<=450000):
+                raise ValueError('progress')
         for msg in chats:
             if not isinstance(msg,dict) or msg.get('role') not in ('user','assistant') or not isinstance(msg.get('text'),str) or len(msg['text'])>6000 or not isinstance(msg.get('proposals'),list) or len(json.dumps(msg['proposals'],ensure_ascii=False))>12000: raise ValueError('chat')
         for f in raw['facts']:
@@ -501,6 +525,23 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
         pp.checkpoint=json.dumps(cp,ensure_ascii=False)
         for rev in revs:
             db.add(Revision(section_id=old_map[rev['section_id']],version=rev['version'],title=rev['title'].strip(),body=rev['body'],blocks=json.dumps(rev['blocks'],ensure_ascii=False)))
+        from .writer_intelligence import SectionSynopsis, WriterProgress, section_text, fingerprint
+        for summary in synopses:
+            original=summary['section_id'];new_id=old_map[original]
+            new_section=db.get(Section,new_id)
+            source_hash=summary.get('source_hash','') or fingerprint(section_text(new_section))
+            db.add(SectionSynopsis(
+                section_id=new_id,project_id=pp.id,
+                summary=summary.get('summary',''),
+                central_event=summary.get('central_event',''),
+                character_change=summary.get('character_change',''),
+                open_question=summary.get('open_question',''),
+                source_hash=source_hash,
+                origin='writer' if summary.get('origin')=='writer' else 'ai_reviewed'))
+        if progress:
+            db.add(WriterProgress(project_id=pp.id,user_id=user.id,
+                section_id=old_map.get(progress.get('section_id')),
+                tab=progress['tab'],cursor_offset=progress.get('cursor_offset',0)))
         for msg in chats:
             db.add(Chat(project_id=pp.id,role=msg['role'],text=msg['text'],proposals=json.dumps(msg['proposals'],ensure_ascii=False)))
         for f in raw['facts']:
