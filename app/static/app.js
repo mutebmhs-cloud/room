@@ -88,7 +88,7 @@ document.addEventListener('submit',async e=>{const form=e.target;if(!['createPro
   const data=Object.fromEntries(new FormData(form));
   const p=await api('/projects',{method:'POST',body:JSON.stringify(data)});
   S.projects=await api('/projects/catalog');
-  closeModal();await loadProject(p.id,'free');
+  closeModal();await loadProject(p.id,p.reused?'overview':'free');
   toast(p.reused?'هذا المشروع موجود بالفعل؛ فتحنا العمل السابق':'أُنشئ المشروع');
  }finally{S.creating=false;if(button.isConnected){button.disabled=false;button.textContent='إنشاء المشروع'}}
  return;
