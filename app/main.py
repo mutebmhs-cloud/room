@@ -252,10 +252,10 @@ def create_project(data:CreateProject,user:User=Depends(auth),db:OrmSession=Depe
     # Legacy projects may already contain duplicate titles; do not destroy them.
     if db.bind.dialect.name=='postgresql':
         db.execute(text('SELECT pg_advisory_xact_lock(:lock_id)'),{'lock_id':int(user.id)+913570000})
-    existing=db.scalars(select(Project).where(Project.user_id==user.id,Project.kind==data.kind)).all()
-    found=next((p for p in existing if normalized_title(p.title)==normalized_title(title)),None)
-    if found:
-        return {**proj_json(found),'reused':True}
+    existing=db.execute(select(Project.id,Project.title).where(Project.user_id==user.id,Project.kind==data.kind)).all()
+    found_id=next((item.id for item in existing if normalized_title(item.title)==normalized_title(title)),None)
+    if found_id:
+        return {**proj_json(db.get(Project,found_id)),'reused':True}
     p=Project(user_id=user.id,title=title,kind=data.kind,structure='{}',checkpoint='{}')
     db.add(p);db.commit()
     return {**proj_json(p),'reused':False}
