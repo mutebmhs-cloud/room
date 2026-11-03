@@ -1,0 +1,55 @@
+name: Live v2 deployment verification
+on:
+  push:
+    paths:
+      - '.github/workflows/live-v2-verification.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Verify deployment over the public HTTPS endpoint (read-only)
+        run: |
+          python - <<'PY'
+          import json,time,urllib.request,urllib.error
+          origin='https://writer-space-pilot-room.onrender.com'
+          def fetch(path):
+              request=urllib.request.Request(origin+path,headers={'User-Agent':'writer-v2-live-audit/1.0'})
+              try:
+                  with urllib.request.urlopen(request,timeout=75) as response:
+                      return response.status,response.read(250000).decode('utf-8','replace')
+              except urllib.error.HTTPError as exc:
+                  return exc.code,exc.read(20000).decode('utf-8','replace')
+          for attempt in range(3):
+              try:
+                  status,body=fetch('/health')
+                  if status==200:break
+              except Exception:
+                  if attempt==2:raise
+                  time.sleep(8)
+          assert status==200,(status,body[:400])
+          health=json.loads(body)
+          assert health['status']=='ok' and health['durable_storage'] is True and health['pilot_invites'] is True,health
+          print('HEALTH_OK', {k:health.get(k) for k in ('status','durable_storage','pilot_invites','ai_configured')})
+          status,html=fetch('/')
+          assert status==200 and 'id="authForm"' in html and 'id="password"' in html, (status,html[:300])
+          assert 'writer-intelligence-20261103-2' in html, 'New UI version not deployed'
+          status,js=fetch('/static/app.js?v=writer-intelligence-20261103-2')
+          assert status==200 and 'function scheduleAutoUnderstanding' in js and 'function saveProgressSoon' in js,(status,len(js))
+          print('UI_V2_LIVE_OK')
+          for path in ['/api/auth/me','/api/projects/catalog','/api/projects/9999999/intelligence',
+                       '/api/pilot/admin/writers']:
+              code,_=fetch(path)
+              assert code in (401,403), (path,code)
+              print('UNAUTHENTICATED_ACCESS_REJECTED',path,code)
+          code,status_body=fetch('/api/pilot/status')
+          assert code==200,(code,status_body[:350])
+          config=json.loads(status_body)
+          assert config.get('invite_mode') is True,config
+          code,_=fetch('/admin')
+          assert code==200,code
+          print('PUBLIC_DEPLOYMENT_VERIFIED: no production test accounts or projects created')
+          PY
