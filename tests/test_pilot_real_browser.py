@@ -149,6 +149,18 @@ def run():
                 w.screenshot(path=str(OUT/'writer-guide-closed.png'),full_page=True)
                 for kind,name in [('novel','رواية تجريبية'),('short','قصة قصيرة تجريبية'),('flash','قصة خاطفة تجريبية'),('children','قصة أطفال تجريبية'),('screenplay','سيناريو تجريبي')]:
                     create_work(w,kind,name)
+                before=w.locator('.project-link').count()
+                w.locator('#newProject').click()
+                w.locator('#createProjectForm input[name=title]').fill('رواية تجريبية')
+                w.locator('#createProjectForm select[name=kind]').select_option('novel')
+                w.locator('#createProjectForm button.primary').click()
+                expect(w.locator('[data-action=resume-location]')).to_be_visible(timeout=10000)
+                w.locator('[data-action=resume-location]').click()
+                expect(w.locator('#editorBody')).to_be_visible(timeout=10000)
+                record('automatic return to previous manuscript position')
+                w.locator('[data-action=view][data-view=home]').first.click()
+                assert w.locator('.project-link').count()==before,'duplicate project created'
+                record('duplicate project name reopened instead of creating another')
                 w.locator('[data-action=view][data-view=report]').first.click()
                 expect(w.locator('#feedbackForm')).to_be_visible()
                 w.locator('#feedbackForm input[name=subject]').fill('ملاحظة تجربة المتصفح')
