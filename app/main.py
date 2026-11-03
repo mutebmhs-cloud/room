@@ -347,7 +347,8 @@ class Restore(BaseModel):
 def restore(pid:int,sid:int,data:Restore,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     old=owned_section(db,user,pid,sid)
     if old.version!=data.current_version: raise HTTPException(409,'تعديل أحدث موجود')
-    target=db.scalar(select(Revision).where(Revision.section_id==sid,Revision.version==data.target_version))
+    available=db.scalars(select(Revision).where(Revision.section_id==sid).order_by(Revision.version.desc()).limit(3)).all()
+    target=next((rev for rev in available if rev.version==data.target_version),None)
     if not target: raise HTTPException(404,'النسخة المطلوبة غير موجودة')
     snap=Revision(section_id=sid,version=old.version,title=old.title,body=old.body,blocks=old.blocks)
     res=db.execute(update(Section).where(Section.id==sid,Section.version==data.current_version).values(title=target.title,body=target.body,blocks=target.blocks,version=Section.version+1,updated_at=now()))
