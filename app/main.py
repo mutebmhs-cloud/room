@@ -277,8 +277,14 @@ class UpdateProject(BaseModel):
 
 @app.put('/api/projects/{pid}')
 def update_project(pid:int,data:UpdateProject,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
-    owned_project(db,user,pid)
+    current=owned_project(db,user,pid)
     if not data.title.strip(): raise HTTPException(422,'اسم العمل لا يمكن أن يكون فارغًا')
+    if normalized_title(data.title)!=normalized_title(current.title):
+        if db.bind.dialect.name=='postgresql':
+            db.execute(text('SELECT pg_advisory_xact_lock(:lock_id)'),{'lock_id':int(user.id)+913570000})
+        matches=db.execute(select(Project.id,Project.title).where(Project.user_id==user.id,Project.kind==current.kind,Project.id!=pid)).all()
+        if any(normalized_title(item.title)==normalized_title(data.title) for item in matches):
+            raise HTTPException(409,'لديك مشروع آخر بهذا الاسم والنوع')
     if len(json.dumps(data.structure,ensure_ascii=False))>50000 or len(json.dumps(data.checkpoint,ensure_ascii=False))>16000: raise HTTPException(413,'البيانات المنظمة طويلة')
     other_bytes=sum(len(s.body.encode('utf-8'))+len(s.blocks.encode('utf-8')) for s in db.scalars(select(Section).where(Section.project_id==pid)))
     if other_bytes+len(data.scratchpad.encode('utf-8'))>25_000_000: raise HTTPException(413,'العمل يتجاوز سعة الاختبار، صدّر نسخة احتياطية')
