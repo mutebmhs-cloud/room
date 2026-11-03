@@ -22,6 +22,7 @@ BLOCK_TYPES={'heading','action','character','dialogue','parenthetical','transiti
 ROOT=Path(__file__).parent
 @asynccontextmanager
 async def lifespan(app):
+    from . import services, services_partners, services_ai, writer_growth  # register tables before create_all
     from .pilot import bootstrap_pilot
     Base.metadata.create_all(bind=engine)
     bootstrap_pilot()
@@ -542,3 +543,18 @@ def delete_account(data:DeleteAccount,user:User=Depends(auth),db:OrmSession=Depe
 
 from .pilot import router as pilot_router
 app.include_router(pilot_router)
+
+from .services import router as services_router
+app.include_router(services_router)
+
+from .services_partners import router as partners_router
+app.include_router(partners_router)
+
+from .services_ai import router as specialists_router
+app.include_router(specialists_router)
+
+from .writer_growth import router as growth_router
+app.include_router(growth_router)
+
+from .pro_export import router as pro_export_router
+app.include_router(pro_export_router)

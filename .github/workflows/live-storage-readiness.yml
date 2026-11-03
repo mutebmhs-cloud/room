@@ -1,0 +1,33 @@
+name: Read-only live storage readiness
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/live-storage-readiness.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Read-only live health assessment (no accounts, no user data)
+        run: |
+          python - <<'PY'
+          import json, urllib.request, urllib.error, time
+          url="https://writer-space-pilot-room.onrender.com/health"
+          response=None
+          for attempt in range(3):
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(url,headers={"User-Agent":"Writer-Readiness-Audit/1.0"}),timeout=75) as r:
+                      response=json.load(r)
+                  break
+              except Exception as err:
+                  print("probe_attempt",attempt+1,type(err).__name__)
+                  time.sleep(4)
+          if response is None:raise SystemExit("LIVE_CHECK_UNAVAILABLE: could not verify deployed service")
+          verdict={k:response.get(k) for k in ("status","durable_storage","ephemeral","ai_configured","pilot_invites")}
+          print("LIVE_HEALTH",verdict)
+          if response.get("durable_storage") is not True:raise SystemExit("LIVE_PERSISTENCE_GATE_FAILED: must not invite real writers")
+          print("DURABILITY_HEALTH_SIGNAL_PASS: backup and independent restore still required")
+          PY

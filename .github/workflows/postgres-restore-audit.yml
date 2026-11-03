@@ -1,0 +1,83 @@
+name: Isolated PostgreSQL backup and restore audit
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/postgres-restore-audit.yml"
+      - "app/**"
+      - "tests/test_writer_growth_export.py"
+permissions:
+  contents: read
+jobs:
+  postgres-backup-restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: writer_test
+          POSTGRES_USER: writer_test
+          POSTGRES_PASSWORD: test-only-password-not-a-production-secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U writer_test -d writer_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python and PostgreSQL tools
+        run: |
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+      - name: Populate synthetic writer data, dump, restore and verify independent database
+        env:
+          DATABASE_URL: postgresql+psycopg://writer_test:test-only-password-not-a-production-secret@localhost:5432/writer_test
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: writer_test
+          PGPASSWORD: test-only-password-not-a-production-secret
+        run: |
+          python - <<'PY'
+          from app.db import Base,engine,SessionLocal
+          from app.models import User,Project,Section,Revision
+          from app.main import app  # import all registered models in application order
+          from app.security import hash_password
+          Base.metadata.create_all(bind=engine)
+          with SessionLocal() as db:
+              u=User(email="synthetic-restore@invalid.test",password_hash=hash_password.hash("SafeTestPassword2026"))
+              db.add(u);db.flush()
+              p=Project(user_id=u.id,title="اختبار استعادة رواية",kind="novel",scratchpad="أفكار عربية لا تخص مستخدمًا حقيقيًا")
+              db.add(p);db.flush()
+              sec=Section(project_id=p.id,title="الفصل الأول",body="بداية اختبار سلامة النص العربي.",version=2)
+              db.add(sec);db.flush()
+              db.add(Revision(section_id=sec.id,version=1,title="الفصل الأول",body="نسخة قديمة للاختبار"))
+              db.commit()
+          print("SEEDED_SYNTHETIC_RECORDS")
+          PY
+          pg_dump -Fc --no-owner --no-privileges -d writer_test -f /tmp/writer-test.dump
+          psql -d postgres -c 'CREATE DATABASE writer_restored;'
+          pg_restore --no-owner --no-privileges -d writer_restored /tmp/writer-test.dump
+          DATABASE_URL=postgresql+psycopg://writer_test:test-only-password-not-a-production-secret@localhost:5432/writer_restored python - <<'PY'
+          from sqlalchemy import select
+          from app.db import SessionLocal
+          from app.models import User,Project,Section,Revision
+          with SessionLocal() as db:
+              p=db.scalar(select(Project).where(Project.title=="اختبار استعادة رواية"))
+              assert p and p.scratchpad=="أفكار عربية لا تخص مستخدمًا حقيقيًا"
+              s=db.scalar(select(Section).where(Section.project_id==p.id))
+              assert s and s.body=="بداية اختبار سلامة النص العربي."
+              assert db.scalar(select(Revision).where(Revision.section_id==s.id)).body=="نسخة قديمة للاختبار"
+              assert db.scalar(select(User).where(User.id==p.user_id))
+          print("RESTORE_VERIFIED_SYNTHETIC_ONLY")
+          PY
+      - name: Validate service schema on restored PostgreSQL
+        env:
+          DATABASE_URL: postgresql+psycopg://writer_test:test-only-password-not-a-production-secret@localhost:5432/writer_restored
+        run: python -m pytest -q tests/test_writer_growth_export.py
