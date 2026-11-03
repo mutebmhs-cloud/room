@@ -102,6 +102,8 @@ def create_work(page,kind,label):
         page.locator('#summaryForm button.primary').click()
         expect(page.get_by_text('ملخص مصطنع لاختبار الاستمرارية')).to_be_visible()
         record('writer manually saves chapter synopsis')
+        page.locator('#editorBody').evaluate('(el)=>{el.focus();el.setSelectionRange(7,7);el.dispatchEvent(new KeyboardEvent("keyup",{bubbles:true}))}')
+        page.wait_for_timeout(950)
     page.locator('[data-tab=structure]').first.click()
     page.locator('[data-structure-field=protagonist]').fill('شخصية تجريبية')
     page.locator('[data-action=save-project]').first.click()
@@ -161,7 +163,8 @@ def run():
                 expect(w.get_by_text('العودة إلى الكتابة')).to_be_visible()
                 w.locator('[data-action=resume-location]').click()
                 expect(w.locator('#editorBody')).to_be_visible(timeout=10000)
-                record('automatic return to previous manuscript position')
+                assert w.locator('#editorBody').evaluate('(el)=>el.selectionStart')==7,'restored cursor should match last saved writing offset'
+                record('automatic return to previous manuscript position with exact cursor offset')
                 w.locator('[data-action=view][data-view=home]').first.click()
                 assert w.locator('.project-link').count()==before,'duplicate project created'
                 record('duplicate project name reopened instead of creating another')
