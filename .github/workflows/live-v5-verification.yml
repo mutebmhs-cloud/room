@@ -1,4 +1,4 @@
-name: Verify live writer reading v5
+name: Verify live writer literary v7
 on:
   push:
     branches: [main]
@@ -26,7 +26,7 @@ jobs:
           for _ in range(25):
               try:
                   status,html=get('/')
-                  if status==200 and 'writer-reading-v5-20261104-2' in html:break
+                  if status==200 and 'writer-literary-v7-20261104-1' in html:break
               except Exception:pass
               time.sleep(12)
           else:raise AssertionError('Current v5 manifest is not live')
@@ -35,8 +35,8 @@ jobs:
           h=json.loads(body)
           assert h['status']=='ok' and h['durable_storage'] is True and h['pilot_invites'] is True,h
           print('LIVE_HEALTH', {k:h.get(k) for k in ('status','ai_configured','durable_storage','pilot_invites')})
-          status,js=get('/static/app.js?v=writer-reading-v5-20261104-2')
-          assert status==200 and 'function readingMapPage' in js and 'function inspectEvidence' in js
+          status,js=get('/static/app.js?v=writer-literary-v7-20261104-1')
+          assert status==200 and 'function readingMapPage' in js and 'function inspectEvidence' in js and 'compareWriterRevision' in js and 'id="reviewMode"' in js and 'shareMemory' in js
           for path in ['/api/auth/me','/api/projects/1/reading-map',
                        '/api/projects/1/literary/context?section_id=1',
                        '/api/projects/1/literary/findings',
