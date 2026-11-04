@@ -741,3 +741,5 @@ from .epub_export import router as epub_router
 app.include_router(epub_router)
 from .manuscript_tools import router as manuscript_tools_router
 app.include_router(manuscript_tools_router)
+from .reading_map import router as reading_map_router
+app.include_router(reading_map_router)

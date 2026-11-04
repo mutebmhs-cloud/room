@@ -209,6 +209,17 @@ def run():
                 w.locator('[data-action=literary-review]').first.click()
                 expect(w.locator('#toast')).to_contain_text('الذكاء غير متصل')
                 record('literary review safely explains offline AI and shows author memory')
+                w.locator('#reviewFocus').fill('نص مصطنع')
+                w.locator('[data-action=inspect-evidence]').first.click()
+                expect(w.get_by_text('الشواهد المسترجعة من المخطوط')).to_be_visible(timeout=10000)
+                expect(w.get_by_text('استرجاع نصي محلي.',exact=False)).to_be_visible(timeout=10000)
+                w.locator('[data-action=close-modal]').last.click()
+                record('focused local evidence review never requires an AI key')
+                w.locator('[data-tab=reading]').first.click()
+                expect(w.get_by_text('خريطة قراءة العمل')).to_be_visible(timeout=10000)
+                expect(w.get_by_text('الفصول والإشارات الزمنية')).to_be_visible(timeout=10000)
+                record('private author reading map shows saved manuscript without AI')
+
                 # Catalog results remain metadata only; no passage comparison is claimed.
                 def fake_catalog(route):
                     route.fulfill(status=200,content_type='application/json',
