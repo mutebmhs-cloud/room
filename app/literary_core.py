@@ -182,7 +182,9 @@ async def review(pid:int,data:ReviewRequest,user:User=Depends(core.auth),db:Sess
     for f in result.get('feedback',[])[:6]:
         evidence=f.get('evidence','')
         matching=[item for item in context if evidence and evidence in item['excerpt']]
-        if not matching:continue
+        # An identical quotation in multiple chapters is ambiguous: do not assign
+        # a possibly incorrect source automatically.
+        if len(matching)!=1:continue
         source=matching[0]
         s=core.owned_section(db,user,pid,source['section_id'])
         current=section_text(s)
