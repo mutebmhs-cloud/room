@@ -129,3 +129,26 @@ def test_word_export_and_nondestructive_import():
         assert len(all_sections)>=2 and any('أحب سامر' in s['body'] for s in all_sections)
         assert request(w,csrf,'POST',f'/api/projects/{pid}/manuscript/docx/import',{
             'filename':'other.docx','content_base64':base64.b64encode(b'not a docx').decode()}).status_code==422
+
+def test_review_findings_roundtrip_in_portable_backup(monkeypatch):
+    with TestClient(app) as writer:
+        csrf=author(writer);pid=make_project(writer,csrf)
+        sid=section(writer,csrf,pid,'الفصل الأول','احتفظت هند بالرسالة عند النافذة.')
+        async def model(kind,scope,text):
+            return {'feedback':[{'observation':'تأكد من موضع الرسالة',
+                 'evidence':'احتفظت هند بالرسالة','impact':'تؤثر في الاستمرارية',
+                 'action':'قارن المشهد التالي'}]}
+        monkeypatch.setattr(lit,'generate_analysis',model)
+        assert request(writer,csrf,'POST',f'/api/projects/{pid}/literary/review',
+                {'section_id':sid,'allow_ai_processing':True}).status_code==200
+        export=writer.get(f'/api/projects/{pid}/export')
+        assert export.status_code==200,export.text
+        assert len(export.json()['literary_findings'])==1
+        restored=request(writer,csrf,'POST','/api/import',{'data':export.json()})
+        assert restored.status_code==200,restored.text
+        new_pid=restored.json()['id']
+        notes=writer.get(f'/api/projects/{new_pid}/literary/findings')
+        assert notes.status_code==200
+        assert len(notes.json())==1
+        assert notes.json()[0]['observation']=='تأكد من موضع الرسالة'
+        assert notes.json()[0]['section_id']!=sid
