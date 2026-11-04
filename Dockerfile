@@ -5,6 +5,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && useradd -m -u 10001 appuser
 COPY app ./app
 COPY scripts ./scripts
+# Synthetic, non-user literary test fixtures required by the opt-in startup smoke check.
+COPY tests/fixtures/literary_fault_cases.json ./tests/fixtures/literary_fault_cases.json
 USER appuser
 EXPOSE 8000
 CMD ["uvicorn","app.main:app","--host","0.0.0.0","--port","8000","--proxy-headers","--forwarded-allow-ips","*"]
