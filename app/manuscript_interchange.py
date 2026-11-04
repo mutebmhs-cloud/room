@@ -40,15 +40,20 @@ def format_document(doc):
 def export_docx(pid:int,user:User=Depends(core.auth),db:Session=Depends(get_db)):
     project=core.owned_project(db,user,pid)
     doc=Document();format_document(doc)
-    title=doc.add_paragraph(style='Title');title.add_run(project.title);rtl(title)
-    for section in db.scalars(select(Section).where(Section.project_id==pid).order_by(Section.position,Section.id)):
-        h=doc.add_paragraph(style='Heading 1');h.add_run(section.title);rtl(h)
-        blocks=core._json(section.blocks,[])
-        content=section.body
-        if blocks:
-            content+='\n'+'\n'.join(str(b.get('text','')) for b in blocks if b.get('text'))
-        for line in content.splitlines():
-            p=doc.add_paragraph();p.add_run(line);rtl(p)
+    if project.kind=='screenplay':
+        from .screenplay_layout import render_screenplay
+        chapters=db.scalars(select(Section).where(Section.project_id==pid).order_by(Section.position,Section.id)).all()
+        render_screenplay(doc,project,chapters,core._json)
+    else:
+        title=doc.add_paragraph(style='Title');title.add_run(project.title);rtl(title)
+        for section in db.scalars(select(Section).where(Section.project_id==pid).order_by(Section.position,Section.id)):
+            h=doc.add_paragraph(style='Heading 1');h.add_run(section.title);rtl(h)
+            blocks=core._json(section.blocks,[])
+            content=section.body
+            if blocks:
+                content+='\n'+'\n'.join(str(b.get('text','')) for b in blocks if b.get('text'))
+            for line in content.splitlines():
+                p=doc.add_paragraph();p.add_run(line);rtl(p)
     buffer=BytesIO();doc.save(buffer);buffer.seek(0)
     return StreamingResponse(buffer,media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         headers={'Content-Disposition':'attachment; filename="writer-manuscript.docx"',
