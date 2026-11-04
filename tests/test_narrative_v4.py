@@ -119,3 +119,42 @@ def test_epub_is_valid_arabic_rtl_package_and_escapes_manuscript():
             assert '<علامة>' not in html
             assert 'بداية &lt;المغامرة&gt;' in html
             assert ET.fromstring(z.read('OEBPS/chapters/chapter-2.xhtml')) is not None
+
+def test_cross_chapter_review_becomes_stale_when_another_chapter_changes(monkeypatch):
+    from app import literary_core as lit
+    with TestClient(app) as writer:
+        csrf=signup(writer);pid=create(writer,csrf)
+        earlier=chapter(writer,csrf,pid,'الحادثة','تحدثت هند عن المفتاح الفضي مع سليم.')
+        later=chapter(writer,csrf,pid,'النتيجة','قال سليم إن المفتاح الفضي لا يزال عند هند.')
+        async def model(kind,scope,text):
+            assert 'المفتاح الفضي' in text
+            return {'feedback':[{'observation':'راجع تسلسل انتقال المفتاح',
+                'evidence':'قال سليم إن المفتاح الفضي لا يزال عند هند.',
+                'impact':'قد يتعارض انتقال الشيء بين الفصلين',
+                'action':'قارن ما يعرفه الطرفان'}]}
+        monkeypatch.setattr(lit,'generate_analysis',model)
+        result=post(writer,csrf,f'/api/projects/{pid}/literary/review',
+            {'section_id':later,'allow_ai_processing':True})
+        assert result.status_code==200,result.text
+        fid=result.json()['findings'][0]['id']
+        current=writer.get(f'/api/projects/{pid}/literary/findings').json()
+        assert current[0]['context_status']=='current'
+        assert current[0]['stale'] is False
+        # An earlier source changes while the quoted chapter stays untouched.
+        updated=post(writer,csrf,f'/api/projects/{pid}/sections/{earlier}',
+            {'title':'الحادثة','version':2,'body':'تحدثت هند عن رسالة جديدة.', 'blocks':[]},'PUT')
+        assert updated.status_code==200,updated.text
+        stale=writer.get(f'/api/projects/{pid}/literary/findings').json()
+        assert stale[0]['stale'] is True
+        assert stale[0]['context_status']=='changed'
+        recheck=writer.get(f'/api/projects/{pid}/literary/findings/{fid}/recheck')
+        assert recheck.status_code==200
+        assert recheck.json()['evidence_still_present'] is True
+        assert recheck.json()['requires_literary_review'] is True
+        exported=writer.get(f'/api/projects/{pid}/export').json()
+        assert len(exported['literary_findings'][0]['context_sources'])==2
+        restored=post(writer,csrf,'/api/import',{'data':exported})
+        assert restored.status_code==200,restored.text
+        new_id=restored.json()['id']
+        restored_findings=writer.get(f'/api/projects/{new_id}/literary/findings').json()
+        assert restored_findings[0]['context_status']=='changed'
