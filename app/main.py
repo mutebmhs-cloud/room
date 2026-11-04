@@ -626,3 +626,5 @@ from .pilot import router as pilot_router
 app.include_router(pilot_router)
 from .writer_intelligence import router as intelligence_router
 app.include_router(intelligence_router)
+from .literary_core import router as literary_router
+app.include_router(literary_router)
