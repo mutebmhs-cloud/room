@@ -141,7 +141,9 @@ def test_cross_chapter_review_becomes_stale_when_another_chapter_changes(monkeyp
             return {'feedback':[{'observation':'راجع تسلسل انتقال المفتاح',
                 'evidence':'قال سليم إن المفتاح الفضي لا يزال عند هند.',
                 'impact':'قد يتعارض انتقال الشيء بين الفصلين',
-                'action':'قارن ما يعرفه الطرفان'}]}
+                'action':'قارن ما يعرفه الطرفان',
+                'corroborating_evidence':'تحدثت هند عن المفتاح الفضي مع سليم.',
+                'classification':'objective_candidate'}]}
         monkeypatch.setattr(lit,'generate_analysis',model)
         result=post(writer,csrf,f'/api/projects/{pid}/literary/review',
             {'section_id':later,'allow_ai_processing':True})
@@ -149,6 +151,9 @@ def test_cross_chapter_review_becomes_stale_when_another_chapter_changes(monkeyp
         fid=result.json()['findings'][0]['id']
         current=writer.get(f'/api/projects/{pid}/literary/findings').json()
         assert current[0]['context_status']=='current'
+        assert current[0]['category']=='objective_candidate'
+        assert len(current[0]['citations'])==2
+        assert {quote['section_id'] for quote in current[0]['citations']}=={earlier,later}
         assert current[0]['stale'] is False
         # An earlier source changes while the quoted chapter stays untouched.
         updated=post(writer,csrf,f'/api/projects/{pid}/sections/{earlier}',
