@@ -168,6 +168,37 @@ def run():
                 w.locator('[data-action=view][data-view=home]').first.click()
                 assert w.locator('.project-link').count()==before,'duplicate project created'
                 record('duplicate project name reopened instead of creating another')
+
+                # Author-facing literary memory and guided review must work without AI keys.
+                w.locator('#projectNav .project-link').filter(has_text='رواية تجريبية').first.click()
+                w.locator('[data-tab=literary]').first.click()
+                expect(w.get_by_text('مراجعة أدبية مسندة بالنص')).to_be_visible()
+                w.locator('[data-action=show-narrative-memory]').first.click()
+                expect(w.get_by_text('ذاكرة العمل',exact=True)).to_be_visible()
+                w.locator('[data-action=close-modal]').last.click()
+                w.locator('[data-action=literary-review]').first.click()
+                expect(w.locator('#toast')).to_contain_text('الذكاء غير متصل')
+                record('literary review safely explains offline AI and shows author memory')
+                # Catalog results remain metadata only; no passage comparison is claimed.
+                def fake_catalog(route):
+                    route.fulfill(status=200,content_type='application/json',
+                        body='{"query":"قطار مهجور","results":[{"title":"كتاب اصطناعي","authors":["مؤلف اختباري"],"first_publish_year":1970,"source":"Open Library","url":"https://openlibrary.org/works/OL123W","comparison_scope":"بيانات فهرسية فقط؛ لم تتم مقارنة النص الكامل"}],"coverage":"catalog_metadata_only"}')
+                w.route('**/api/projects/*/literary/research',fake_catalog)
+                w.locator('[data-tab=research]').first.click()
+                expect(w.locator('#researchForm')).to_be_visible()
+                w.locator('#researchForm [name=query]').fill('قطار مهجور')
+                w.locator('#researchForm [name=consent_external_lookup]').check()
+                w.locator('#researchForm button.primary').click()
+                expect(w.get_by_text('كتاب اصطناعي')).to_be_visible()
+                record('source discovery with explicit consent and actual catalog link')
+                w.locator('[data-tab=manuscript]').first.click()
+                with w.expect_download(timeout=12000) as downloaded:
+                    w.locator('[data-action=docx-export]').first.click()
+                saved=OUT/'roundtrip.docx'
+                downloaded.value.save_as(saved)
+                assert saved.stat().st_size>500
+                record('writer downloads Arabic Word manuscript')
+
                 w.locator('[data-action=view][data-view=report]').first.click()
                 expect(w.locator('#feedbackForm')).to_be_visible()
                 w.locator('#feedbackForm input[name=subject]').fill('ملاحظة تجربة المتصفح')
