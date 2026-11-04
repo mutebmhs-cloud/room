@@ -38,7 +38,16 @@ async def lifespan(app):
             if not db.scalar(select(Invite).where(Invite.token_hash == digest(bootstrap))):
                 db.add(Invite(token_hash=digest(bootstrap)))
                 db.commit()
-    yield
+    diagnostic_task=None
+    if os.getenv("WRITER_AI_STARTUP_SMOKE")=="1":
+        import asyncio
+        from .ai_live_diagnostic import evaluate_live_synthetic
+        diagnostic_task=asyncio.create_task(evaluate_live_synthetic())
+    try:
+        yield
+    finally:
+        if diagnostic_task and not diagnostic_task.done():
+            diagnostic_task.cancel()
 app=FastAPI(lifespan=lifespan,title='مساحة الكاتب',docs_url=None if IS_PROD else '/api/docs',redoc_url=None,openapi_url=None if IS_PROD else '/api/openapi.json')
 if IS_PROD:
     hosts=[v.strip() for v in os.getenv('APP_ALLOWED_HOSTS','').split(',') if v.strip()]
