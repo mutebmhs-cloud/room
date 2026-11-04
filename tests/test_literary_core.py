@@ -152,3 +152,36 @@ def test_review_findings_roundtrip_in_portable_backup(monkeypatch):
         assert len(notes.json())==1
         assert notes.json()[0]['observation']=='تأكد من موضع الرسالة'
         assert notes.json()[0]['section_id']!=sid
+
+def test_model_gateway_has_no_paid_or_cross_provider_fallback(monkeypatch):
+    import asyncio
+    from fastapi import HTTPException
+    from app import provider_gateway as gateway
+    monkeypatch.setenv('WRITER_AI_PROVIDER','groq')
+    monkeypatch.setenv('GROQ_API_KEY','synthetic-key-not-real')
+    monkeypatch.setenv('GROQ_FREE_MODEL','paid/model')
+    assert gateway.configured() is False
+    monkeypatch.setenv('GROQ_FREE_MODEL','openai/gpt-oss-20b')
+    assert gateway.configured() is True
+    class FailedResponse:
+        status_code=429
+    class FakeClient:
+        def __init__(self,**kwargs):pass
+        async def __aenter__(self):return self
+        async def __aexit__(self,*args):return False
+        async def post(self,url,**kwargs):
+            assert url.startswith('https://api.groq.com/')
+            return FailedResponse()
+    monkeypatch.setattr(gateway.httpx,'AsyncClient',FakeClient)
+    try:
+        asyncio.run(gateway.json_completion('قيم النص',[{'role':'user','content':'نص مصطنع'}],
+            {'required':['summary']},100))
+        assert False,'429 must be returned to writer'
+    except HTTPException as err:
+        assert err.status_code==429
+    monkeypatch.setenv('WRITER_AI_PROVIDER','openrouter')
+    monkeypatch.setenv('OPENROUTER_API_KEY','synthetic-key-not-real')
+    monkeypatch.setenv('OPENROUTER_FREE_MODEL','openrouter/free')
+    assert gateway.configured() is False
+    monkeypatch.setenv('OPENROUTER_FREE_MODEL','publisher/model:free')
+    assert gateway.configured() is True
