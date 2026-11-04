@@ -17,6 +17,7 @@ from .db import Base, get_db
 from .models import User, Project, Section, Fact, now
 from . import main as core
 from .writer_intelligence import SectionSynopsis, section_text, generate_analysis, fingerprint
+from .narrative_retrieval import salient_terms, select_passage, rank_chapters
 
 router=APIRouter(prefix='/api/projects/{pid}/literary',tags=['literary-core'])
 ARABIC_TATWEEL='ـ'
@@ -65,42 +66,41 @@ def sources(db,pid):
     return sections,synopses
 
 def contextual_sources(db,pid,section_id,query='',max_chars=11500):
-    """Context is exact, cited text. It is NOT a fully semantic retrieval engine."""
+    """Passage retrieval across the complete chapter, with exact offsets and
+    coverage disclosure. Not semantic search or complete-book analysis.
+    """
     sections,synopses=sources(db,pid)
-    selected=next((s for s in sections if s.id==section_id),None)
-    if selected is None:raise HTTPException(404,'الفصل غير موجود')
-    search=keywords(query or section_text(selected)[:500])
-    scored=[]
-    for s in sections:
-        if s.id==section_id:continue
-        original=section_text(s)
-        synopsis=synopses.get(s.id)
-        auxiliary=(synopsis.summary+' '+synopsis.central_event+' '+synopsis.character_change) if synopsis and synopsis.source_hash==fingerprint(original) else ''
-        terms=keywords(s.title+' '+original[:2500]+' '+auxiliary)
-        score=len(search&terms)
-        scored.append((score,s.position,s,original,auxiliary))
-    scored.sort(key=lambda x:(-x[0],x[1]))
-    selected_text=section_text(selected)
+    selected=next((section for section in sections if section.id==section_id),None)
+    if selected is None:
+        raise HTTPException(404,'الفصل غير موجود')
+    raw_selected=section_text(selected)
+    search_terms=salient_terms(query or raw_selected[:1500])
+    valid_summaries={}
+    for section in sections:
+        synopsis=synopses.get(section.id)
+        if synopsis and synopsis.source_hash==fingerprint(section_text(section)):
+            valid_summaries[section.id]=' '.join((synopsis.summary,
+                synopsis.central_event,synopsis.character_change))
+    ranked=rank_chapters(sections,section_id,query or raw_selected[:1500],valid_summaries)
+    candidates=[(selected,raw_selected,True)]+[
+        (section,section_text(section),False) for section,_,score in ranked if score>0][:7]
+    if len(candidates)==1 and len(sections)>1:
+        candidates.extend((section,section_text(section),False)
+                          for section,_,_ in ranked[:2])
     blocks=[]
-    budget=max_chars
-    # Always include current text first, never silently claim to have read omitted text.
-    for s,raw in [(selected,selected_text)]+[(x[2],x[3]) for x in scored if x[0]>0][:7]:
-        if budget<200:break
-        cap=7500 if s.id==selected.id else 1500
-        portion=raw[:min(cap,budget)]
-        blocks.append({'section_id':s.id,'section_title':s.title,'version':s.version,
-                       'excerpt':portion,'excerpt_offset':0,'truncated':len(portion)<len(raw),
-                       'source_hash':fingerprint(raw),'selected':s.id==selected.id})
-        budget-=len(portion)
-    if len(blocks)==1 and len(sections)>1:
-        for score,position,s,raw,_ in scored[:2]:
-            if budget<200:break
-            portion=raw[:min(900,budget)]
-            blocks.append({'section_id':s.id,'section_title':s.title,'version':s.version,
-                           'excerpt':portion,'excerpt_offset':0,'truncated':len(portion)<len(raw),
-                           'source_hash':fingerprint(raw),'selected':False})
-            budget-=len(portion)
+    remaining=max_chars
+    for section,full_text,is_selected in candidates:
+        if remaining<200:break
+        max_window=7500 if is_selected else 1700
+        span,offset=select_passage(full_text,search_terms,min(max_window,remaining))
+        if not span.strip():continue
+        blocks.append({'section_id':section.id,'section_title':section.title,
+                       'version':section.version,'excerpt':span,
+                       'excerpt_offset':offset,'truncated':len(span)<len(full_text),
+                       'source_hash':fingerprint(full_text),'selected':is_selected})
+        remaining-=len(span)
     return blocks,len(sections)
+
 
 def finding_json(row,current_version=None,current_hash=None):
     return {'id':row.id,'section_id':row.section_id,'source_version':row.source_version,
