@@ -17,6 +17,7 @@ from .db import Base, get_db
 from .models import Project, Section, User, now
 from . import main as core
 from .provider_gateway import configured as ai_configured, selection as ai_selection, json_completion
+from .editorial_rubrics import specialized_instruction
 
 router=APIRouter(prefix='/api/projects/{pid}/intelligence',tags=['writer-intelligence'])
 FIELDS={'premise','genre','theme','protagonist','goal','obstacle','audience','logline',
@@ -139,11 +140,11 @@ def analysis_json(row):
   'source_hash':row.source_hash,'result':core._json(row.result_json,{}),
   'created_at':row.created_at.isoformat() if row.created_at else None}
 
-async def generate_analysis(kind,scope,text):
+async def generate_analysis(kind,scope,text,review_mode='comprehensive'):
  key=os.getenv('OPENAI_API_KEY','')
  if not ai_configured():
   raise HTTPException(503,'التحليل الأدبي الذكي غير متصل بعد. يمكن متابعة الكتابة والملخصات اليدوية.')
- guidance=GENRE_GUIDANCE.get(kind,GENRE_GUIDANCE['novel'])
+ guidance=(specialized_instruction(kind,review_mode) if scope=='critique' else GENRE_GUIDANCE.get(kind,GENRE_GUIDANCE['novel']))
  task={
   'project':'استخرج من الأفكار الحرة الحقول المناسبة فقط. لا تخترع ما لم يذكره الكاتب، وميز الصريح عن المستنتج. اترك الحقول غير المحددة دون اقتراح.',
   'section':'لخّص الفصل أو المشهد باختصار دون إنشاء أحداث أو إضافة أشخاص؛ حدد حدثه الأساسي وتحوله والسؤال الذي بقي معلقًا.',
@@ -196,7 +197,7 @@ async def generate_analysis(kind,scope,text):
      cls='narrative_hypothesis'
     feedback.append({**{k:v[k][:550] for k in ('observation','evidence','impact','action')},
      'corroborating_evidence':corroborating[:550],'classification':cls})
-  return {'fields':cleaned,'feedback':feedback,
+  return {'fields':cleaned,'feedback':feedback,'review_mode':review_mode if scope=='critique' else None,
    **{k:str(result.get(k,'') or '')[:1200 if k=='summary' else 600]
       for k in ('summary','central_event','character_change','open_question')}}
  except HTTPException:raise
