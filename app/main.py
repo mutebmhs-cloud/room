@@ -548,6 +548,10 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
                     type(reference.get('version')) is not int or reference['version']<1 or
                     not isinstance(reference.get('source_hash'),str) or len(reference['source_hash'])!=64):
                     raise ValueError('literary context reference')
+                quotes=reference.get('quotes',[])
+                if (not isinstance(quotes,list) or len(quotes)>2 or
+                    any(not isinstance(q,str) or len(q)>650 for q in quotes)):
+                    raise ValueError('literary context quotations')
         total_pinned_bytes=0
         for pinned in pinned_milestones:
             if (not isinstance(pinned,dict) or pinned.get('section_id') not in version_map or
@@ -631,7 +635,8 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
                 state=finding['state'])
             db.add(row);db.flush()
             references=[{'section_id':old_map.get(ref['section_id'],-1),
-                'version':ref['version'],'source_hash':ref['source_hash']}
+                'version':ref['version'],'source_hash':ref['source_hash'],
+                'quotes':ref.get('quotes',[])}
                 for ref in finding.get('context_sources',[])]
             if references:
                 db.add(FindingContextSnapshot(finding_id=row.id,project_id=pp.id,
