@@ -109,6 +109,20 @@ def create_work(page,kind,label):
     page.locator('[data-action=save-project]').first.click()
     page.locator('[data-tab=coach]').first.click()
     expect(page.get_by_text('مدربك الشخصي').first).to_be_visible()
+    if kind=='novel':
+        expect(page.locator('#coachTracking')).to_contain_text('مسارك التدريبي',timeout=12000)
+        page.locator('[data-action=coach-start]').first.click()
+        expect(page.locator('#coachStartForm')).to_be_visible()
+        page.locator('#coachStartForm [name=before_rating]').select_option('2')
+        page.locator('#coachStartForm button.primary').click()
+        expect(page.locator('[data-action=coach-finish]').first).to_be_visible(timeout=12000)
+        page.locator('[data-action=coach-finish]').first.click()
+        expect(page.locator('#coachFinishForm')).to_be_visible()
+        page.locator('#coachFinishForm [name=after_rating]').select_option('4')
+        page.locator('#coachFinishForm [name=author_reflection]').fill('تعلمت كيف أتحقق من دافع الشخصية دون إعادة كتابة النص')
+        page.locator('#coachFinishForm button.primary').click()
+        expect(page.locator('#coachTracking')).to_contain_text('جلسات مكتملة: 1',timeout=12000)
+        record('writer coaching sessions persist before/after self assessment')
     record('complete writing/editing path: '+kind)
     if page.locator('#modalOverlay').count():
         raise AssertionError('Unexpected modal after saved work for '+kind+': '+page.locator('#modalOverlay').inner_text()[:1200])
@@ -198,6 +212,13 @@ def run():
                 downloaded.value.save_as(saved)
                 assert saved.stat().st_size>500
                 record('writer downloads Arabic Word manuscript')
+                with w.expect_download(timeout=12000) as epub_file:
+                    w.locator('[data-action=epub-export]').first.click()
+                epub_saved=OUT/'writer-synthetic.epub'
+                epub_file.value.save_as(epub_saved)
+                assert epub_saved.stat().st_size>400
+                record('writer downloads right-to-left EPUB3 manuscript')
+
 
                 w.locator('[data-action=view][data-view=report]').first.click()
                 expect(w.locator('#feedbackForm')).to_be_visible()
