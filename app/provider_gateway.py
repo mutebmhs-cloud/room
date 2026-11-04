@@ -59,7 +59,8 @@ async def json_completion(instructions,messages,schema,max_tokens=1800):
         if provider=='groq':
             # GPT-OSS consumes reasoning tokens before producing user-visible
             # output. Keep reasoning bounded and require exact schema adherence.
-            payload['reasoning_effort']='low'
+            effort=os.getenv('GROQ_REASONING_EFFORT','low').lower().strip()
+            payload['reasoning_effort']=effort if effort in ('low','medium','high') else 'low'
             payload['response_format']={'type':'json_schema','json_schema':{
                 'name':'writer_literary_response','strict':True,'schema':schema}}
             payload.pop('max_tokens',None)
