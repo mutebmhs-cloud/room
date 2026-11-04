@@ -129,7 +129,7 @@ def create_work(page,kind,label):
         page.once('dialog',lambda dialog:dialog.accept('نسخة أدبية مثبتة'))
         page.locator('[data-action=pin-milestone]').first.click()
         page.locator('[data-action=milestone-list]').first.click()
-        expect(page.get_by_text('نسخة أدبية مثبتة')).to_be_visible()
+        expect(page.get_by_text('نسخة أدبية مثبتة',exact=True)).to_be_visible()
         page.locator('[data-action=close-modal]').last.click()
         page.locator('[data-action=manuscript-search]').first.click()
         expect(page.locator('#manuscriptSearchForm')).to_be_visible()
