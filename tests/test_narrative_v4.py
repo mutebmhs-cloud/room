@@ -5,7 +5,17 @@ from io import BytesIO
 from zipfile import ZipFile,ZIP_STORED
 from xml.etree import ElementTree as ET
 from fastapi.testclient import TestClient
+import pytest
 from app.main import app
+from app import main as core
+
+@pytest.fixture(autouse=True)
+def isolate_throttle_between_tests():
+    # Earlier suite cases share the same in-memory rate limiter: tests must not
+    # generate false 429 failures or weaken rate limits in application code.
+    core._attempts.clear()
+    yield
+    core._attempts.clear()
 from app.db import SessionLocal
 from app.models import Invite
 from app.security import digest
