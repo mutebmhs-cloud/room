@@ -15,6 +15,7 @@ from .db import Base, engine, get_db, SessionLocal
 from .models import User, Invite, RecoveryCode, Session as LoginSession, Project, Section, Revision, Fact, Chat, now
 from .security import hash_password, digest, secure_random, pw_valid, verify, require_csrf, COOKIE_NAME, SESSION_DAYS, IS_PROD, csrf_for_session
 from .ai import analyze
+from .provider_gateway import configured as ai_configured
 import unicodedata
 from .fountain import parse as parse_fountain, FountainError
 
@@ -89,7 +90,7 @@ def robots(): return PlainTextResponse('User-agent: *\nDisallow: /\n')
 @app.get('/health')
 def health(db:OrmSession=Depends(get_db)):
     db.execute(text('SELECT 1'))
-    return {'status':'ok','ai_configured':bool(os.getenv('OPENAI_API_KEY')) and os.getenv('PILOT_EPHEMERAL')!='1', 'ephemeral':engine.dialect.name=='sqlite','durable_storage':engine.dialect.name=='postgresql','pilot_invites':os.getenv('PILOT_INVITE_MODE')=='1'}
+    return {'status':'ok','ai_configured':ai_configured(), 'ephemeral':engine.dialect.name=='sqlite','durable_storage':engine.dialect.name=='postgresql','pilot_invites':os.getenv('PILOT_INVITE_MODE')=='1'}
 
 _attempts={}
 def throttle(key, limit=9, window=900):
@@ -628,3 +629,5 @@ from .writer_intelligence import router as intelligence_router
 app.include_router(intelligence_router)
 from .literary_core import router as literary_router
 app.include_router(literary_router)
+from .manuscript_interchange import router as manuscript_router
+app.include_router(manuscript_router)
