@@ -8,6 +8,9 @@ on:
       - 'app/static/app.js'
       - 'app/static/index.html'
       - 'app/literary_core.py'
+      - 'app/writing_coach.py'
+      - 'app/epub_export.py'
+      - 'app/narrative_retrieval.py'
   workflow_dispatch:
 permissions:
   contents: read
