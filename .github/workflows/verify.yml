@@ -16,7 +16,7 @@ jobs:
       - run: python -m pip install -r requirements.txt -r requirements-dev.txt
       - run: python -m compileall -q app scripts tests
       - run: node --check app/static/app.js && node --check app/static/admin.js
-      - run: python -m pytest -q tests/test_acceptance.py tests/test_extended.py tests/test_publish_regression.py tests/test_release_regressions.py tests/test_pilot_invites.py tests/test_writer_intelligence.py tests/test_literary_core.py tests/test_narrative_v4.py
+      - run: python -m pytest -q tests/test_acceptance.py tests/test_extended.py tests/test_publish_regression.py tests/test_release_regressions.py tests/test_pilot_invites.py tests/test_writer_intelligence.py tests/test_literary_core.py tests/test_narrative_v4.py tests/test_writer_tools.py
 
   postgres-integration:
     runs-on: ubuntu-latest
