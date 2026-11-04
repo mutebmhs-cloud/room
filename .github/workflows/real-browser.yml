@@ -11,6 +11,7 @@ on:
       - 'app/writing_coach.py'
       - 'app/epub_export.py'
       - 'app/narrative_retrieval.py'
+      - 'app/manuscript_tools.py'
   workflow_dispatch:
 permissions:
   contents: read
