@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from .db import Base, get_db
 from .models import Project, Section, User, now
 from . import main as core
+from .provider_gateway import configured as ai_configured, selection as ai_selection, json_completion
 
 router=APIRouter(prefix='/api/projects/{pid}/intelligence',tags=['writer-intelligence'])
 FIELDS={'premise','genre','theme','protagonist','goal','obstacle','audience','logline',
@@ -139,7 +140,7 @@ def analysis_json(row):
 
 async def generate_analysis(kind,scope,text):
  key=os.getenv('OPENAI_API_KEY','')
- if not key or os.getenv('PILOT_EPHEMERAL')=='1':
+ if not ai_configured():
   raise HTTPException(503,'التحليل الأدبي الذكي غير متصل بعد. يمكن متابعة الكتابة والملخصات اليدوية.')
  guidance=GENRE_GUIDANCE.get(kind,GENRE_GUIDANCE['novel'])
  task={
@@ -158,16 +159,19 @@ async def generate_analysis(kind,scope,text):
                    'strict':True,'schema':ANALYSIS_SCHEMA}},
   'max_output_tokens':1800,'store':False}
  try:
-  async with httpx.AsyncClient(timeout=55) as client:
-   response=await client.post('https://api.openai.com/v1/responses',json=payload,
-    headers={'Authorization':'Bearer '+key})
-  if response.status_code!=200:
-   raise HTTPException(502,'تعذّر الاتصال بمزود التحليل الذكي')
-  body=response.json()
-  output=''.join(v.get('text','') for o in body.get('output',[])
-   if o.get('type')=='message' for v in o.get('content',[])
-   if v.get('type')=='output_text')
-  result=json.loads(output)
+  if ai_selection()[0]=='openai':
+   async with httpx.AsyncClient(timeout=55) as client:
+    response=await client.post('https://api.openai.com/v1/responses',json=payload,
+     headers={'Authorization':'Bearer '+key})
+   if response.status_code!=200:
+    raise HTTPException(502,'تعذّر الاتصال بمزود التحليل الذكي')
+   body=response.json()
+   output=''.join(v.get('text','') for o in body.get('output',[])
+    if o.get('type')=='message' for v in o.get('content',[])
+    if v.get('type')=='output_text')
+   result=json.loads(output)
+  else:
+   result=await json_completion(instructions,payload['input'],ANALYSIS_SCHEMA,max_tokens=1800)
   if not all(k in result for k in ANALYSIS_SCHEMA['required']):
    raise ValueError('missing fields')
   cleaned=[]
@@ -207,7 +211,7 @@ def get_intelligence(pid:int,user:User=Depends(core.auth),db:Session=Depends(get
  return {'summaries':{str(x.section_id):synopsis_json(x,sec_by_id.get(x.section_id)) for x in rows},
   'progress':progress_json(db,pid),'drafts':[analysis_json(x) for x in pending],
   'reviews':[analysis_json(x) for x in reviews],
-  'ai_available':bool(os.getenv('OPENAI_API_KEY')) and os.getenv('PILOT_EPHEMERAL')!='1'}
+  'ai_available':ai_configured()}
 
 @router.post('/analyze')
 async def analyze_text(pid:int,data:AnalysisRequest,user:User=Depends(core.auth),db:Session=Depends(get_db)):
