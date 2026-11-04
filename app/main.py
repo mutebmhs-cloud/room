@@ -707,3 +707,5 @@ from .writing_coach import router as coach_router
 app.include_router(coach_router)
 from .epub_export import router as epub_router
 app.include_router(epub_router)
+from .manuscript_tools import router as manuscript_tools_router
+app.include_router(manuscript_tools_router)
