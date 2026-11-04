@@ -59,9 +59,8 @@ def search_manuscript(pid:int,q:str,user:User=Depends(core.auth),db:Session=Depe
             found.append({'section_id':sec.id,'title':sec.title,'version':sec.version,
                           'offset':hit.start(),'excerpt':raw[start:end],
                           'excerpt_offset':start})
-        if len(found)>=120:break
     return {'query':needle,'hits':found,'total_matched':total,
-            'results_truncated':len(found)>=120,
+            'results_truncated':total>len(found),
             'scope':'all_current_sections',
             'note':'البحث الحرفي داخل المخطوط الحالي فقط؛ لا يقارن كتبًا خارجية.'}
 
