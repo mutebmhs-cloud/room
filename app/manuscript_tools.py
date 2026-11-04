@@ -39,6 +39,49 @@ def brief(x):
     return {'id':x.id,'section_id':x.section_id,'version':x.version,'label':x.label,
             'title':x.title,'created_at':x.created_at.isoformat() if x.created_at else None}
 
+def _editorial_lines(section_body, blocks):
+    lines=section_body.splitlines()
+    for block in core._json(blocks,[]):
+        if isinstance(block,dict):
+            lines.extend((str(block.get('type','action'))+': '+str(block.get('text',''))).splitlines())
+    return lines
+
+@router.get('/compare')
+def compare_section_revisions(
+    pid:int,section_id:int,target_version:int|None=None,
+    user:User=Depends(core.auth),db:Session=Depends(get_db)):
+    """Literal source comparison, not an automated claim of literary improvement."""
+    from difflib import SequenceMatcher
+    section=core.owned_section(db,user,pid,section_id)
+    previous=db.scalars(select(Revision).where(Revision.section_id==section_id)
+        .order_by(Revision.version.desc()).limit(3)).all()
+    baseline=(next((r for r in previous if r.version==target_version),None)
+              if target_version is not None else (previous[0] if previous else None))
+    if baseline is None:
+        raise HTTPException(404,'لا توجد مراجعة محفوظة لهذه النسخة')
+    old=_editorial_lines(baseline.body,baseline.blocks)
+    new=_editorial_lines(section.body,section.blocks)
+    if len(old)+len(new)>16000:
+        raise HTTPException(413,'المقارنة التفصيلية طويلة؛ استخدم نسخة أقصر أو قسم الفصل')
+    matcher=SequenceMatcher(a=old,b=new,autojunk=False)
+    differences=[]
+    for tag,i1,i2,j1,j2 in matcher.get_opcodes():
+        if tag=='equal':continue
+        differences.append({
+            'change':tag,
+            'before':'\\n'.join(old[i1:i2])[:1100],
+            'after':'\\n'.join(new[j1:j2])[:1100],
+            'old_line':i1+1,'new_line':j1+1})
+    return {
+      'section_id':section_id,'source_version':baseline.version,
+      'current_version':section.version,
+      'before_words':len((' '.join(old)).split()),
+      'after_words':len((' '.join(new)).split()),
+      'changes':differences[:65],
+      'changes_truncated':len(differences)>65,
+      'note':'المقارنة حرفية بين نسختين محفوظتين؛ لا تثبت التحسن الأدبي بمفردها.'
+    }
+
 @router.get('/search')
 def search_manuscript(pid:int,q:str,user:User=Depends(core.auth),db:Session=Depends(get_db)):
     core.owned_project(db,user,pid)
