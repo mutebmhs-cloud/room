@@ -435,11 +435,13 @@ async def chat(pid:int,data:ChatRequest,request:Request,user:User=Depends(auth),
 def export_project(pid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     p=owned_project(db,user,pid)
     from .writer_intelligence import SectionSynopsis, progress_json
-    from .literary_core import LiteraryFinding
+    from .literary_core import LiteraryFinding, FindingContextSnapshot
     from .writing_coach import PracticeEntry
     sections=db.scalars(select(Section).where(Section.project_id==pid).order_by(Section.position,Section.id)).all()
     synopses=db.scalars(select(SectionSynopsis).where(SectionSynopsis.project_id==pid)).all()
     literary=db.scalars(select(LiteraryFinding).where(LiteraryFinding.project_id==pid)).all()
+    context_rows=db.scalars(select(FindingContextSnapshot).where(FindingContextSnapshot.project_id==pid)).all()
+    contexts={row.finding_id:_json(row.sources_json,[]) for row in context_rows}
     coaching=db.scalars(select(PracticeEntry).where(PracticeEntry.project_id==pid)).all()
     return {'format':'writer-cloud-v2','project':{**proj_json(p),'kind':p.kind},
             'sections':[sec_json(x) for x in sections],
@@ -453,7 +455,8 @@ def export_project(pid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)
             'progress':progress_json(db,pid),
             'literary_findings':[{'section_id':x.section_id,'source_version':x.source_version,
                 'source_hash':x.source_hash,'observation':x.observation,'evidence':x.evidence,
-                'impact':x.impact,'action':x.action,'category':x.category,'state':x.state}
+                'impact':x.impact,'action':x.action,'category':x.category,'state':x.state,
+                'context_sources':contexts.get(x.id,[])}
                 for x in literary],
             'coaching_sessions':[{'practice_code':x.practice_code,'skill':x.skill,
                 'state':x.state,'before_rating':x.before_rating,
@@ -531,6 +534,14 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
                     raise ValueError('literary finding field')
             if item['state'] not in ('open','discussed','accepted','dismissed','resolved'):
                 raise ValueError('literary finding state')
+            references=item.get('context_sources',[])
+            if not isinstance(references,list) or len(references)>12:
+                raise ValueError('literary context size')
+            for reference in references:
+                if (not isinstance(reference,dict) or type(reference.get('section_id')) is not int or
+                    type(reference.get('version')) is not int or reference['version']<1 or
+                    not isinstance(reference.get('source_hash'),str) or len(reference['source_hash'])!=64):
+                    raise ValueError('literary context reference')
         for item in coaching_sessions:
             if not isinstance(item,dict) or item.get('state') not in ('in_progress','completed'):
                 raise ValueError('coaching session state')
@@ -590,13 +601,20 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
             db.add(WriterProgress(project_id=pp.id,user_id=user.id,
                 section_id=old_map.get(progress.get('section_id')),
                 tab=progress['tab'],cursor_offset=progress.get('cursor_offset',0)))
-        from .literary_core import LiteraryFinding
+        from .literary_core import LiteraryFinding, FindingContextSnapshot
         for finding in literary_findings:
-            db.add(LiteraryFinding(project_id=pp.id,section_id=old_map[finding['section_id']],
+            row=LiteraryFinding(project_id=pp.id,section_id=old_map[finding['section_id']],
                 source_version=finding['source_version'],source_hash=finding['source_hash'],
                 observation=finding['observation'],evidence=finding['evidence'],
                 impact=finding['impact'],action=finding['action'],category=finding['category'],
-                state=finding['state']))
+                state=finding['state'])
+            db.add(row);db.flush()
+            references=[{'section_id':old_map.get(ref['section_id'],-1),
+                'version':ref['version'],'source_hash':ref['source_hash']}
+                for ref in finding.get('context_sources',[])]
+            if references:
+                db.add(FindingContextSnapshot(finding_id=row.id,project_id=pp.id,
+                    sources_json=json.dumps(references,ensure_ascii=False)))
         from .writing_coach import PracticeEntry
         for exercise in coaching_sessions:
             db.add(PracticeEntry(project_id=pp.id,practice_code=exercise['practice_code'],
