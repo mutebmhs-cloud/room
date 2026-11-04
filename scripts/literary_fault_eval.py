@@ -1,4 +1,4 @@
-"""Arabic literary fault-injection evaluation against the EXACT application analysis adapter.
+"""Arabic literary fault-injection evaluation against the EXACT configured application adapter.
 
 A real evaluation REQUIRES an API key and bills that provider; without a key it
 exits nonzero and explicitly marks the experiment NOT EXECUTED. All texts are
@@ -8,13 +8,14 @@ import asyncio, json, os, sys, time
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from app.writer_intelligence import generate_analysis
+from app.provider_gateway import configured as ai_configured, selection as ai_selection
 
 FIXTURE=Path(__file__).resolve().parents[1]/"tests/fixtures/literary_fault_cases.json"
 
 async def run():
     data=json.loads(FIXTURE.read_text(encoding="utf8"))
-    if not os.getenv("OPENAI_API_KEY"):
-        print("NOT_RUN: OPENAI_API_KEY not configured. No literary defect detection has been verified.")
+    if not ai_configured():
+        print("NOT_RUN: Selected AI provider has no valid API key. No literary defect detection has been verified.")
         return 2
     rows=[]
     for case in data["cases"]:
@@ -44,7 +45,7 @@ async def run():
     false_alarms=sum(x["false_alarm"] is True for x in controls)
     report={"evaluation":"diagnostic_heuristics_requires_human_judgment",
       "faults":len(faults),"potential_hits":hits,"clean_controls":len(controls),
-      "flagged_controls":false_alarms,"model":os.getenv("OPENAI_MODEL","gpt-4.1-mini"),
+      "flagged_controls":false_alarms,"provider":ai_selection()[0], "model":ai_selection()[1],
       "results":rows}
     dest=Path(os.getenv("WRITER_EVAL_OUTPUT","/tmp/writer-fault-evaluation.json"))
     dest.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf8")
