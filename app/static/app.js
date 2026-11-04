@@ -246,6 +246,8 @@ function literaryPage(){
  const rows=(S.literary||[]).map(x=>`<div class="card" style="margin-bottom:12px">
   <p><b>${esc(x.observation)}</b></p>
   <p class="hint">الشاهد: «${esc(x.evidence)}» — الفصل ${x.section_id}، الإصدار ${x.source_version}</p>
+  <p class="hint">تصنيف الملاحظة: ${({objective_candidate:'مشكلة موضوعية محتملة',narrative_hypothesis:'فرضية سردية تحتاج مراجعة',interpretive_opinion:'قراءة نقدية قابلة للنقاش'})[x.category]||'تحتاج مراجعة'}</p>
+  ${(x.citations||[]).length?`<div class="notice">${x.citations.map(c=>`<p><small>شاهد من الفصل ${esc(c.section_id)}، الإصدار ${esc(c.version)}: «${esc(c.quote)}»</small></p>`).join('')}</div>`:''}
   <p>الأثر: ${esc(x.impact)}</p><p>خطوة للكاتب: ${esc(x.action)}</p>
   <p class="hint">${x.stale?'تغيّر المصدر منذ إصدار هذه الملاحظة؛ أعد الفحص.':'هذه ملاحظة نقدية مرشحة وليست حكمًا قطعيًا.'}</p>
   <div class="btn-row">
