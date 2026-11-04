@@ -77,3 +77,35 @@ def test_reading_map_does_not_invent_characters_or_times():
     assert result['documented_subject_mentions']==[]
     assert result['chapters'][0]['time_cues']==[]
     assert result['chapters'][0]['dialogue_lines']==0
+
+def test_focused_review_retrieves_relevant_evidence_across_chapters(monkeypatch):
+    from app import literary_core
+    with TestClient(app) as writer:
+        csrf=account(writer)
+        pid=create(writer,csrf,'تجربة ذاكرة متصلة '+secrets.token_hex(3))
+        older=chapter(writer,csrf,pid,'التمهيد',
+            'ساد الهدوء فوق النهر. '*140+
+            'وضعت سلمى المفتاح الفضي داخل الصندوق القديم.')
+        current=chapter(writer,csrf,pid,'العودة',
+            'قال سالم إن المفتاح الفضي لا يزال في جيبه.')
+        seen={}
+        async def fake_review(kind,scope,text):
+            seen['context']=text
+            return {'feedback':[{'observation':'تأكد من انتقال المفتاح بين الشخصيات',
+                'evidence':'قال سالم إن المفتاح الفضي لا يزال في جيبه.',
+                'corroborating_evidence':'وضعت سلمى المفتاح الفضي داخل الصندوق القديم.',
+                'impact':'ربما يوجد انتقال غير ممهد','action':'راجع الأحداث السابقة',
+                'classification':'objective_candidate'}]}
+        monkeypatch.setattr(literary_core,'generate_analysis',fake_review)
+        r=mutate(writer,csrf,'POST',f'/api/projects/{pid}/literary/review',{
+            'section_id':current,'focus':'المفتاح الفضي وانتقاله',
+            'allow_ai_processing':True})
+        assert r.status_code==200,r.text
+        assert 'المفتاح الفضي وانتقاله' in seen['context']
+        assert 'وضعت سلمى المفتاح الفضي' in seen['context']
+        findings=r.json()['findings']
+        assert len(findings)==1
+        row=writer.get(f'/api/projects/{pid}/literary/findings').json()[0]
+        assert row['category']=='objective_candidate'
+        assert len(row['citations'])==2
+        assert {c['section_id'] for c in row['citations']}=={older,current}
