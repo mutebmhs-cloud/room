@@ -523,9 +523,9 @@ function readingMapPage(){
  if(!m)return '<div class="card"><h3>خريطة قراءة المخطوط</h3><p>يجري فحص المقاطع المحفوظة محليًا دون إرسالها إلى أي نموذج خارجي.</p></div>';
  const chapters=(m.chapters||[]).map(ch=>'<div class="card" style="margin:10px 0"><b>'+esc(ch.title)+'</b>'+
   '<p>'+ch.words+' كلمة تقريبًا — '+ch.paragraphs+' فقرة — '+ch.dialogue_lines+' سطر حوار محتمل</p>'+
-  (ch.time_cues||[]).map(c=>'<p class="hint">إشارة زمنية «'+esc(c.cue)+'» — «'+esc(c.quote)+'»</p>').join('')+'</div>').join('');
+  (ch.time_cues||[]).map(c=>'<p class="hint">إشارة زمنية «'+esc(c.cue)+'» — «'+esc(c.quote)+'» '+(S.project.kind==='screenplay'?'':'<button class="small-btn" data-action="search-jump" data-id="'+ch.section_id+'" data-offset="'+c.offset+'">افتح موضع الدليل</button>')+'</p>').join('')+'</div>').join('');
  const mentions=(m.documented_subject_mentions||[]).map(x=>'<div class="card" style="margin:8px 0"><b>'+esc(x.subject)+'</b>'+
-  '<p class="hint">'+x.chapters.map(c=>esc(c.title)+' ('+c.at_least+' مواضع معروضة)').join(' — ')+'</p></div>').join('');
+  '<p class="hint">'+x.chapters.map(c=>esc(c.title)+' ('+c.at_least+' مواضع معروضة)'+(S.project.kind==='screenplay'?'':' <button class="small-btn" data-action="search-jump" data-id="'+c.section_id+'" data-offset="'+c.offsets[0]+'">اذهب إلى الاسم</button>')).join(' — ')+'</p></div>').join('');
  return '<div class="card"><h3>خريطة قراءة العمل</h3>'+
  '<p>إحصاءات وصفية وإشارات زمنية واقتباسات من النص المحفوظ؛ لا تصنيف تلقائي لجودة العمل ولا استخراج لشخصيات جديدة.</p>'+
  '<div class="grid two"><div><b>كلمات المخطوط</b><p>'+m.total_words+'</p></div><div><b>الأحرف</b><p>'+m.total_characters+'</p></div></div>'+
