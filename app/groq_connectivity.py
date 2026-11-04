@@ -35,7 +35,7 @@ async def check_groq_connection():
                       "messages":[
                         {"role":"system","content":"أجب بكلمة عربية واحدة فقط."},
                         {"role":"user","content":"ما لغة هذه الجملة: هذا اختبار مصطنع."}],
-                      "max_tokens":35,"stream":False}),timeout=16.0)
+                      "max_completion_tokens":300,"reasoning_effort":"low","stream":False}),timeout=16.0)
         ok=False
         if response.status_code==200:
             data=response.json()

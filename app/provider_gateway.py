@@ -56,6 +56,14 @@ async def json_completion(instructions,messages,schema,max_tokens=1800):
            'messages':[{'role':'system','content':instructions+'\nأعد JSON صالحًا فقط.'},*messages],
            'response_format':{'type':'json_object'},
            'max_tokens':max_tokens,'stream':False}
+        if provider=='groq':
+            # GPT-OSS consumes reasoning tokens before producing user-visible
+            # output. Keep reasoning bounded and require exact schema adherence.
+            payload['reasoning_effort']='low'
+            payload['response_format']={'type':'json_schema','json_schema':{
+                'name':'writer_literary_response','strict':True,'schema':schema}}
+            payload.pop('max_tokens',None)
+            payload['max_completion_tokens']=max(2600,min(max_tokens+1200,4200))
         url=('https://api.groq.com/openai/v1/chat/completions' if provider=='groq'
              else 'https://openrouter.ai/api/v1/chat/completions')
     try:
