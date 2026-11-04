@@ -49,7 +49,8 @@ def test_selected_mode_reaches_real_gateway_adapter_without_external_model(monke
     assert REVIEW_MODES[mode][0] in calls[0][0]
     assert 'السيناريو' in calls[0][0]
     assert calls[0][1][0]['role']=='user'
-    assert calls[0][2]['required']==['fields','summary','central_event','character_change','open_question','feedback']
+    assert calls[0][2]['required']==['feedback']
+    assert list(calls[0][2]['properties'])==['feedback']
 
 def author(client):
     code=secrets.token_urlsafe(35)
