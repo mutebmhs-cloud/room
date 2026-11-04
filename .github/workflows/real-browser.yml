@@ -1,9 +1,13 @@
 name: Real Chromium Pilot E2E
 on:
+  pull_request:
   push:
     paths:
       - '.github/workflows/real-browser.yml'
       - 'tests/test_pilot_real_browser.py'
+      - 'app/static/app.js'
+      - 'app/static/index.html'
+      - 'app/literary_core.py'
   workflow_dispatch:
 permissions:
   contents: read
