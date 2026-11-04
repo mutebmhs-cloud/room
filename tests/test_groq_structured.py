@@ -1,12 +1,15 @@
 import asyncio
 import json
+import pytest
 from app import provider_gateway as gateway
 
-def test_groq_generation_has_strict_schema_and_reasoning_budget(monkeypatch):
+@pytest.mark.parametrize('effort',['low','medium','high'])
+def test_groq_generation_has_strict_schema_and_reasoning_budget(monkeypatch,effort):
     monkeypatch.setenv("WRITER_AI_PROVIDER","groq")
     monkeypatch.setenv("GROQ_API_KEY","not-an-actual-key")
     monkeypatch.setenv("GROQ_FREE_MODEL","openai/gpt-oss-20b")
     monkeypatch.setenv("PILOT_EPHEMERAL","0")
+    monkeypatch.setenv("GROQ_REASONING_EFFORT",effort)
     recorded=[]
     class Response:
         status_code=200
@@ -27,7 +30,7 @@ def test_groq_generation_has_strict_schema_and_reasoning_budget(monkeypatch):
         [{"role":"user","content":"نص مصطنع"}],schema,max_tokens=1700))
     assert result["summary"]=="تم"
     payload=recorded[0]
-    assert payload["reasoning_effort"]=="low"
+    assert payload["reasoning_effort"]==effort
     assert payload["response_format"]["type"]=="json_schema"
     assert payload["response_format"]["json_schema"]["strict"] is True
     assert payload["max_completion_tokens"]>=2600

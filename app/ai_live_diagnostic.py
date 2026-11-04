@@ -55,8 +55,10 @@ async def evaluate_live_synthetic():
             if case["clean"] and grounded:flagged_clean+=1
             if not case["clean"] and signal:faults_detected+=1
             success+=1
+            counts=result.get("diagnostic_counts",{})
             print("WRITER_AI_LIVE_DIAG case="+case["id"]+
                   " response_valid=true grounded="+str(len(grounded))+
+                  " model_feedback="+str(counts.get("model_feedback_count","unknown"))+
                   " total="+str(len(feedback))+
                   " heuristic_signal="+str(signal).lower()+
                   " clean_control="+str(bool(case["clean"])).lower(),flush=True)

@@ -214,6 +214,8 @@ async def generate_analysis(kind,scope,text,review_mode='comprehensive'):
     feedback.append({**{k:v[k][:550] for k in ('observation','evidence','impact','action')},
      'corroborating_evidence':corroborating[:550],'classification':cls})
   return {'fields':cleaned,'feedback':feedback,'review_mode':review_mode if scope=='critique' else None,
+   'diagnostic_counts':{'model_feedback_count':len(result.get('feedback',[])),
+                        'grounded_feedback_count':len(feedback)},
    **{k:str(result.get(k,'') or '')[:1200 if k=='summary' else 600]
       for k in ('summary','central_event','character_change','open_question')}}
  except HTTPException:raise
