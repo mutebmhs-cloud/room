@@ -3,7 +3,7 @@ const $=(sel)=>document.querySelector(sel), esc=(v='')=>String(v??'').replace(/[
 const TYPES={novel:'رواية',short:'قصة قصيرة',flash:'قصة خاطفة',children:'قصة أطفال',screenplay:'سيناريو'};
 const FIELD_NAMES={premise:'ملخص العمل',genre:'النوع الفرعي',theme:'الموضوع',protagonist:'الشخصية الرئيسية',goal:'هدف الشخصية',obstacle:'العائق',audience:'الجمهور',logline:'الجملة الدرامية',next_step:'الخطوة التالية',central_question:'السؤال المركزي للعمل',vision:'الرؤية الإبداعية',message:'المعنى أو الأثر المقصود',purpose:'هدف المؤلف',tone:'النبرة والأسلوب',conflict:'الصراع المحوري',visual_language:'اللغة البصرية'};
 const BLOCK_NAMES={heading:'عنوان المشهد',action:'حركة مرئية',character:'اسم الشخصية',dialogue:'الحوار',parenthetical:'توجيه أدائي',transition:'انتقال',note:'ملاحظة'};
-let S={csrf:'',email:'',projects:[],project:null,sections:[],facts:[],tab:'overview',pid:null,sid:null,draftProject:null,draftSection:null,dirtyProject:false,dirtySection:false,saving:false,invalid:false,projectEdits:0,sectionEdits:0,aiAvailable:false,chat:[],view:'home',authMode:'login',timer:null,intel:null,literary:[],research:[],context:null,progressTimer:null,opening:false,creating:false,autoUnderstand:false,autoTimer:null,lastAutoText:null,lastAutoRequest:0,pilotMode:false,role:'writer',username:''};
+let S={csrf:'',email:'',projects:[],project:null,sections:[],facts:[],tab:'overview',pid:null,sid:null,draftProject:null,draftSection:null,dirtyProject:false,dirtySection:false,saving:false,invalid:false,projectEdits:0,sectionEdits:0,aiAvailable:false,chat:[],view:'home',authMode:'login',timer:null,intel:null,literary:[],research:[],context:null,coachData:null,progressTimer:null,opening:false,creating:false,autoUnderstand:false,autoTimer:null,lastAutoText:null,lastAutoRequest:0,pilotMode:false,role:'writer',username:''};
 function toast(msg){const el=$('#toast');el.textContent=msg;el.classList.remove('hidden');clearTimeout(el.t);el.t=setTimeout(()=>el.classList.add('hidden'),4000)}
 function setStatus(msg,bad=false){const el=$('#saveStatus');el.textContent=msg;el.style.color=bad?'#aa3e37':'#67827d'}
 async function api(path,opts={}){const method=opts.method||'GET',h={};if(method!=='GET'){h['Content-Type']='application/json';h['X-CSRF-Token']=S.csrf}const res=await fetch('/api'+path,{credentials:'same-origin',headers:h,...opts});let body=null;try{body=await res.json()}catch{body={detail:'تعذر قراءة الرد'}}if(!res.ok){const error=new Error(typeof body.detail==='string'?body.detail:'تعذر إكمال الطلب');error.status=res.status;throw error}return body}
@@ -30,7 +30,7 @@ async function loadProject(pid,tab='overview'){
  S.opening=true;setStatus('جارٍ فتح العمل...');
  try{
   const [d,intel]=await Promise.all([api('/projects/'+pid),api('/projects/'+pid+'/intelligence')]);
-  S.pid=pid;S.project=d.project;S.sections=d.sections;S.facts=d.facts;S.intel=intel;S.literary=[];S.research=[];S.context=null;S.lastCursor=intel.progress?{tab:intel.progress.tab,sid:intel.progress.section_id,offset:intel.progress.cursor_offset||0}:null;S.autoUnderstand=false;S.lastAutoText=null;clearTimeout(S.autoTimer);
+  S.pid=pid;S.project=d.project;S.sections=d.sections;S.facts=d.facts;S.intel=intel;S.literary=[];S.research=[];S.context=null;S.coachData=null;S.lastCursor=intel.progress?{tab:intel.progress.tab,sid:intel.progress.section_id,offset:intel.progress.cursor_offset||0}:null;S.autoUnderstand=false;S.lastAutoText=null;clearTimeout(S.autoTimer);
   S.draftProject=structuredClone(d.project);S.draftSection=null;
   S.sid=intel.progress?.section_id&&d.sections.some(x=>x.id===intel.progress.section_id)?intel.progress.section_id:d.sections[0]?.id||null;
   S.tab=tab;S.view='workspace';S.dirtyProject=false;S.dirtySection=false;S.invalid=false;
@@ -38,18 +38,18 @@ async function loadProject(pid,tab='overview'){
  }catch(e){toast(e.message);setStatus('تعذر فتح العمل',true)}
  finally{S.opening=false}
 }
-function renderProject(){nav();title(S.project.title,kindLabel());let body='';switch(S.tab){case 'overview':body=overview();break;case 'free':body=freePage();break;case 'manuscript':body=manuscriptPage();break;case 'structure':body=structurePage();break;case 'facts':body=factsPage();break;case 'coach':body=coachPage();break;case 'chat':body=chatPage();break;case 'checkpoint':body=checkpointPage();break;case 'literary':body=literaryPage();break;case 'research':body=researchPage();break;}$('#view').innerHTML=`${tabs()}${body}`;if(S.tab==='chat')loadChat().catch(e=>toast(e.message));if(S.tab==='manuscript')bindSectionDraft();if(S.tab==='literary')refreshLiterary().catch(e=>toast(e.message));saveProgressSoon()}
+function renderProject(){nav();title(S.project.title,kindLabel());let body='';switch(S.tab){case 'overview':body=overview();break;case 'free':body=freePage();break;case 'manuscript':body=manuscriptPage();break;case 'structure':body=structurePage();break;case 'facts':body=factsPage();break;case 'coach':body=coachPage();break;case 'chat':body=chatPage();break;case 'checkpoint':body=checkpointPage();break;case 'literary':body=literaryPage();break;case 'research':body=researchPage();break;}$('#view').innerHTML=`${tabs()}${body}`;if(S.tab==='chat')loadChat().catch(e=>toast(e.message));if(S.tab==='manuscript')bindSectionDraft();if(S.tab==='literary')refreshLiterary().catch(e=>toast(e.message));if(S.tab==='coach')refreshCoach().catch(e=>toast(e.message));saveProgressSoon()}
 function overview(){const words=S.sections.reduce((n,s)=>n+(s.body||s.blocks.map(x=>x.text).join(' ')).trim().split(/\s+/).filter(Boolean).length,0);const cp=S.project.checkpoint||{};const progress=S.intel?.progress||{};const focus=S.sections.find(x=>x.id===progress.section_id);return `<div class="hero"><div><div class="eyebrow">${kindLabel()}</div><h2>${esc(S.project.title)}</h2><p>${esc(S.project.premise||'هنا تبدأ حكايتك. اكتب الفكرة الأساسية عندما تكون جاهزًا.')}</p></div><button class="primary" data-action="tab" data-tab="free">اكتب بحرية ←</button></div><div class="grid" style="margin-top:18px"><div class="card"><div class="muted-label">المقاطع والمشاهد</div><div class="kpi">${S.sections.length}</div></div><div class="card"><div class="muted-label">كلمات المخطوط (تقريبية)</div><div class="kpi">${words.toLocaleString('ar')}</div></div><div class="card"><div class="muted-label">وقائع مسجلة</div><div class="kpi">${S.facts.length}</div></div></div><div class="grid two" style="margin-top:18px"><div class="card"><h3>متابعة من حيث توقفت</h3><p>${focus?'آخر فصل: '+esc(focus.title):'المساحة الأخيرة: '+esc(progress.tab||'الأفكار الحرة')}</p><p class="hint">${esc(cp.next||'يمكنك إضافة ملاحظة اختيارية عن الخطوة التالية.')}</p><button class="primary" data-action="resume-location">العودة إلى الكتابة</button><button class="soft-btn" data-action="tab" data-tab="checkpoint">تفاصيل المتابعة</button></div><div class="card"><h3>تجهيز العمل دون تعقيد</h3><p>ابدأ بنص حر، ثم انتقل إلى بناء العمل أو اسأل مساعدك أسئلة حول فكرتك. الاقتراحات لا تُنفذ دون موافقتك.</p><button class="soft-btn" data-action="tab" data-tab="chat">محادثة المساعد</button></div></div>`}
 function freePage(){return `<div class="notice">ابدأ بحرية. أسئلة اختيارية: ما السؤال المركزي للعمل؟ ما الرؤية الإبداعية؟ وما الأثر الذي تريد تركه؟</div><div class="page-layout"><div class="card writer-main"><div class="between"><div><h3>اكتب بحرية — دون قوالب</h3><p class="muted">أفكار، ملاحظات، تساؤلات، أحداث غير مرتبة. هذا ليس المخطوط المنشور.</p></div><span class="pill">مساحة خاصة</span></div><textarea class="scratch" id="scratch" data-project-field="scratchpad" placeholder="ما الذي تريد كتابته؟ ما الذي يقلقك في الفكرة؟ دوّن كل شيء كما يخطر ببالك...">${esc(S.draftProject.scratchpad||'')}</textarea><div class="between"><span class="hint">يُحفظ بعد توقفك عن الكتابة. راجع حالة الحفظ في الأعلى.</span><button class="primary" data-action="save-project">حفظ الآن</button></div><div class="card" style="margin-top:14px"><h3>فهم أفكار العمل</h3><p class="hint">تُستخلص المعلومات عند طلبك فقط، وتراجعها قبل اعتمادها.</p><button class="primary" data-action="analyze-intelligence" data-scope="project">حلّل أفكاري</button><label class="checkrow" style="margin-top:14px"><input type="checkbox" id="autoUnderstand" ${S.autoUnderstand?"checked":""} ${S.intel?.ai_available?"":"disabled"}> أسمح بتحليل أفكاري تلقائيًا بعد الحفظ وإرسالها إلى مزود الذكاء الاصطناعي؛ لا تُعتمد المقترحات دون موافقتي.</label>${S.intel?.ai_available?"":"<p class=\"hint\">الاتصال الذكي غير مفعّل بعد، وبقية وظائف الكتابة متاحة.</p>"}<div id="autoUnderstandStatus"></div>${(S.intel?.drafts||[]).filter(x=>x.scope==="project").map(x=>`<button class="soft-btn" data-action="show-intelligence" data-id="${x.id}">مراجعة اقتراح سابق</button>`).join("")}</div></div><aside class="side-stack"><div class="aside-note"><b>مساحة التفكير قبل التنظيم</b><p>يمكنك الرجوع لهذه الأفكار من أي جهاز بعد تسجيل الدخول. لا تُرسل إلى النموذج الذكي إلا عندما تختار مشاركتها.</p><button class="soft-btn" data-action="tab" data-tab="chat">ناقش الفكرة مع المساعد</button></div></aside></div>`}
 function structurePage(){const st=S.draftProject.structure||{};const shared=['central_question','vision','message','purpose','genre','theme','tone','protagonist','goal','obstacle','conflict','audience','next_step'];const fields=S.project.kind==='screenplay'?['logline','visual_language',...shared]:shared;return `<div class="grid two"><div class="card"><h3>هوية العمل</h3><label>عنوان العمل<input data-project-field="title" value="${esc(S.draftProject.title)}"></label><label>الفكرة الأساسية<textarea data-project-field="premise">${esc(S.draftProject.premise)}</textarea></label><p class="hint">المعلومات التالية للتنظيم، وليست حكمًا على جودة العمل.</p></div><div class="card"><h3>فهم العمل المعتمد</h3><p class="hint">راجع الحقول المقترحة من أفكارك أو اكتبها بنفسك.</p>${fields.map(k=>`<label>${FIELD_NAMES[k]}<textarea rows="2" style="min-height:70px" data-structure-field="${k}" placeholder="لم تحسم بعد...">${esc(st[k]||'')}</textarea></label>`).join('')}<button class="primary" data-action="save-project">حفظ البيانات</button><button class="soft-btn" data-action="tab" data-tab="facts">ذاكرة الشخصيات والوقائع</button></div></div>`}
 function sectionList(){return S.sections.map(s=>`<button class="list-item ${S.sid===s.id?'active':''}" style="width:100%;text-align:right" data-action="select-section" data-id="${s.id}"><b>${esc(s.title)}</b><small>${S.intel?.summaries?.[s.id]?(S.intel.summaries[s.id].stale?'الملخص يحتاج تحديثًا':'له ملخص'):(s.version>1?'نسخة '+s.version:'')}</small></button>`).join('')}
 function selected(){return S.sections.find(s=>s.id===S.sid)||null}
 function bindSectionDraft(){const x=selected();S.draftSection=x?structuredClone(x):null}
-function manuscriptPage(){const s=selected();const synopsis=s?S.intel?.summaries?.[s.id]:null;return `<div class="page-layout"><div class="writer-main"><div class="card"><div class="between wrap"><h3>${S.project.kind==='screenplay'?'مشاهد السيناريو':'محرر النص الأدبي'}</h3><button class="small-btn" data-action="new-section">+ ${S.project.kind==='screenplay'?'مشهد':'فصل / مقطع'}</button><button class="small-btn" data-action="docx-export">تصدير Word</button><button class="small-btn" data-action="docx-import">استيراد Word</button></div>${s?`<label>عنوان المقطع<input id="sectionTitle" data-section-field="title" value="${esc(s.title)}"></label>${S.project.kind==='screenplay'?screenplayEditor(s):`<textarea id="editorBody" class="editor" data-section-field="body" spellcheck="true" placeholder="ابدأ هنا... أنت الكاتب، والنظام يساعدك على التقدم.">${esc(s.body)}</textarea>`}<div class="between wrap"><span class="hint">الحفظ مرتبط برقم المراجعة، ويمنع الكتابة فوق تعديل أحدث.</span><div class="btn-row"><button class="small-btn" data-action="revisions">النسخ السابقة</button><button class="small-btn danger" data-action="delete-section">حذف المقطع</button><button class="primary" data-action="save-section">حفظ النص</button></div><div class="card" style="margin-top:14px"><h3>ملخص الفصل أو المشهد</h3><p>${synopsis?esc(synopsis.summary):"لا يوجد ملخص بعد"}</p>${synopsis?.stale?"<p class=\"bad\">تغير النص ويحتاج الملخص إلى تحديث.</p>":""}<div class="btn-row"><button class="soft-btn" data-action="edit-summary">تعديل الملخص</button><button class="soft-btn" data-action="analyze-intelligence" data-scope="section">اقتراح ملخص</button>${(S.intel?.drafts||[]).filter(x=>x.scope==="section"&&x.section_id===s.id).map(x=>`<button class="soft-btn" data-action="show-intelligence" data-id="${x.id}">مراجعة ملخص سابق</button>`).join("")}</div></div>`:`<div class="empty"><h3>ابدأ بأول ${S.project.kind==='screenplay'?'مشهد':'مقطع'}</h3><button class="primary" data-action="new-section">إنشاء</button></div>`}</div></div><aside class="side-stack"><div class="card"><h3>ترتيب العمل</h3><div class="list">${sectionList()||'<p class="hint">لا توجد مقاطع بعد.</p>'}</div><button class="soft-btn full" style="margin-top:14px" data-action="new-section">+ إضافة</button></div><div class="aside-note" style="margin-top:14px"><b>مساعد لا مؤلف</b><p>اكتب المشهد بنفسك. يمكنك مناقشة البناء والدوافع والمشكلات مع المساعد دون أن يعيد كتابة نصك.</p><button class="small-btn" data-action="tab" data-tab="chat">مراجعة مع المساعد</button></div></aside></div>`}
+function manuscriptPage(){const s=selected();const synopsis=s?S.intel?.summaries?.[s.id]:null;return `<div class="page-layout"><div class="writer-main"><div class="card"><div class="between wrap"><h3>${S.project.kind==='screenplay'?'مشاهد السيناريو':'محرر النص الأدبي'}</h3><button class="small-btn" data-action="new-section">+ ${S.project.kind==='screenplay'?'مشهد':'فصل / مقطع'}</button><button class="small-btn" data-action="docx-export">تصدير Word</button><button class="small-btn" data-action="epub-export">تصدير EPUB</button><button class="small-btn" data-action="manuscript-search">بحث في المخطوط</button><button class="small-btn" data-action="pin-milestone">تثبيت نسخة</button><button class="small-btn" data-action="milestone-list">نسخي المرجعية</button><button class="small-btn" data-action="docx-import">استيراد Word</button></div>${s?`<label>عنوان المقطع<input id="sectionTitle" data-section-field="title" value="${esc(s.title)}"></label>${S.project.kind==='screenplay'?screenplayEditor(s):`<textarea id="editorBody" class="editor" data-section-field="body" spellcheck="true" placeholder="ابدأ هنا... أنت الكاتب، والنظام يساعدك على التقدم.">${esc(s.body)}</textarea>`}<div class="between wrap"><span class="hint">الحفظ مرتبط برقم المراجعة، ويمنع الكتابة فوق تعديل أحدث.</span><div class="btn-row"><button class="small-btn" data-action="revisions">النسخ السابقة</button><button class="small-btn danger" data-action="delete-section">حذف المقطع</button><button class="primary" data-action="save-section">حفظ النص</button></div><div class="card" style="margin-top:14px"><h3>ملخص الفصل أو المشهد</h3><p>${synopsis?esc(synopsis.summary):"لا يوجد ملخص بعد"}</p>${synopsis?.stale?"<p class=\"bad\">تغير النص ويحتاج الملخص إلى تحديث.</p>":""}<div class="btn-row"><button class="soft-btn" data-action="edit-summary">تعديل الملخص</button><button class="soft-btn" data-action="analyze-intelligence" data-scope="section">اقتراح ملخص</button>${(S.intel?.drafts||[]).filter(x=>x.scope==="section"&&x.section_id===s.id).map(x=>`<button class="soft-btn" data-action="show-intelligence" data-id="${x.id}">مراجعة ملخص سابق</button>`).join("")}</div></div>`:`<div class="empty"><h3>ابدأ بأول ${S.project.kind==='screenplay'?'مشهد':'مقطع'}</h3><button class="primary" data-action="new-section">إنشاء</button></div>`}</div></div><aside class="side-stack"><div class="card"><h3>ترتيب العمل</h3><div class="list">${sectionList()||'<p class="hint">لا توجد مقاطع بعد.</p>'}</div><button class="soft-btn full" style="margin-top:14px" data-action="new-section">+ إضافة</button></div><div class="aside-note" style="margin-top:14px"><b>مساعد لا مؤلف</b><p>اكتب المشهد بنفسك. يمكنك مناقشة البناء والدوافع والمشكلات مع المساعد دون أن يعيد كتابة نصك.</p><button class="small-btn" data-action="tab" data-tab="chat">مراجعة مع المساعد</button></div></aside></div>`}
 function screenplayEditor(s){const bl=s.blocks||[];return `<p class="hint">كل عنصر من السيناريو له نوع واضح. النص النهائي يظل من تأليفك.</p><div id="blockList">${bl.map((b,i)=>blockRow(b,i)).join('')}</div><div class="btn-row"><button class="soft-btn" data-action="add-block">+ عنصر سيناريو</button><button class="soft-btn" data-action="fountain">تصدير Fountain</button><button class="soft-btn" data-action="import-fountain">استيراد Fountain</button></div>`}
 function blockRow(b,i){return `<div class="block-row" data-index="${i}"><div class="between wrap"><select data-block-type="${i}" aria-label="نوع العنصر">${Object.keys(BLOCK_NAMES).map(k=>`<option value="${k}" ${b.type===k?'selected':''}>${BLOCK_NAMES[k]}</option>`).join('')}</select><button class="small-btn danger" data-action="remove-block" data-index="${i}">حذف العنصر</button></div><textarea rows="2" data-block-text="${i}" placeholder="اكتب العنصر بنفسك...">${esc(b.text)}</textarea></div>`}
 function factsPage(){return `<div class="grid two"><div class="card"><h3>الوقائع والقرارات</h3><p>اكتب ما تعرفه عن شخصيات العمل أو عالمه. الشاهد الحرفي يثبت وجود العبارة فقط، ولا يثبت صحة تفسيرك.</p><div class="list">${S.facts.map(f=>`<div class="list-item"><div><b>${esc(f.subject)} — ${esc(f.predicate)}</b><p>${esc(f.value)}</p><small>${['source_changed','source_missing'].includes(f.evidence_status)?'تنبيه: تغيّر مصدر الشاهد أو حُذف':f.evidence?'شاهد حرفي يحتاج مراجعة المعنى':'معلومة أدخلها الكاتب'}</small></div><button class="small-btn danger" data-action="del-fact" data-id="${f.id}">حذف</button></div>`).join('')||'<p class="hint">لم تحفظ وقائع بعد.</p>'}</div></div><div class="card"><h3>إضافة واقعة</h3><form id="factForm"><label>الشخصية / الموضوع<input name="subject" required maxlength="200"></label><label>الصفة أو العلاقة<input name="predicate" required maxlength="200" placeholder="يعرف، يسكن، يخاف... "></label><label>المعلومة<input name="value" required maxlength="500"></label><label>المقطع المصدر<select name="section_id"><option value="">دون شاهد — معلومة يدوية</option>${S.sections.map(s=>`<option value="${s.id}">${esc(s.title)}</option>`).join('')}</select></label><label>اقتباس مطابق حرفيًا (اختياري)<textarea name="evidence" placeholder="ضع شاهدًا من المقطع المذكور، ولا تعتبره دليلًا على صحة تفسيرك"></textarea></label><button class="primary">حفظ الواقعة</button></form></div></div>`}
-function coachPage(){const isScreen=S.project.kind==='screenplay';const tasks=isScreen?[['وضوح الفعل المرئي','ما الذي يمكن للكاميرا إظهاره من تغير الشخصية دون شرح داخلي؟'],['الهدف والعائق','هل للشخصية هدف محدد داخل كل مشهد، وما الذي يمنعها؟'],['الاقتصاد في الحوار','ما المعلومات التي يمكن أن تُفهم بالفعل بدل الحوار التفسيري؟']]:S.project.kind==='flash'?[['التكثيف','هل لكل جملة وظيفة سردية لا يمكن حذفها؟'],['التحول','ما اللحظة التي تغير فهم القارئ؟'],['النهاية','هل تُعيد النهاية تفسير ما سبق دون شرح زائد؟']]:[['الدافع','ما الذي تريده الشخصية، وكيف نعرفه من فعلها؟'],['السببية','كيف تسبب المشهد الحالي فيما يليه؟'],['وجهة النظر','من يعرف ماذا، وفي أي لحظة؟']];return `<div class="card"><h3>مراجعة نقدية مرتبطة بالنص</h3><p class="hint">اختر فصلًا، ثم اطلب تحليلًا يربط الملاحظات بشواهد واقعية من نصك، دون كتابة بديلة.</p><button class="primary" data-action="analyze-intelligence" data-scope="critique">تحليل الفصل المختار</button>${(S.intel?.reviews||[]).slice(0,5).map(x=>`<button class="soft-btn" data-action="show-intelligence" data-id="${x.id}">مراجعة سابقة — ${esc(S.sections.find(s=>s.id===x.section_id)?.title||"مشهد سابق")}</button>`).join("")}</div><div class="notice">المدرب أداة توجيه وتأمل. لا يمنح درجة جودة أدبية، ولا يعتبر تعبئة الحقول برهانًا على تحسن النص.</div><div class="grid" style="margin-top:18px">${tasks.map(([name,q],i)=>`<div class="card"><span class="pill">تمرين ${i+1}</span><h3>${name}</h3><p>${q}</p><label>ملاحظتك الشخصية<textarea class="coach-answer" placeholder="فكّر في جواب السؤال، ثم عد إلى مخطوطك لتعديل ما تراه مناسبًا"></textarea></label><button class="soft-btn" data-action="coach-next">متابعة العمل</button></div>`).join('')}</div><div class="card" style="margin-top:18px"><h3>تحتاج إلى مناقشة نقدية أدق؟</h3><p>شارك مقطعًا تحدده بنفسك مع المساعد الذكي بعد موافقتك، واطلب منه أسئلة تفسيرية بدل كتابة بديلة.</p><button class="primary" data-action="tab" data-tab="chat">افتح المساعد الذكي</button></div>`}
+function coachPage(){const isScreen=S.project.kind==='screenplay';const tasks=isScreen?[['وضوح الفعل المرئي','ما الذي يمكن للكاميرا إظهاره من تغير الشخصية دون شرح داخلي؟'],['الهدف والعائق','هل للشخصية هدف محدد داخل كل مشهد، وما الذي يمنعها؟'],['الاقتصاد في الحوار','ما المعلومات التي يمكن أن تُفهم بالفعل بدل الحوار التفسيري؟']]:S.project.kind==='flash'?[['التكثيف','هل لكل جملة وظيفة سردية لا يمكن حذفها؟'],['التحول','ما اللحظة التي تغير فهم القارئ؟'],['النهاية','هل تُعيد النهاية تفسير ما سبق دون شرح زائد؟']]:[['الدافع','ما الذي تريده الشخصية، وكيف نعرفه من فعلها؟'],['السببية','كيف تسبب المشهد الحالي فيما يليه؟'],['وجهة النظر','من يعرف ماذا، وفي أي لحظة؟']];return `<div class="card"><h3>مراجعة نقدية مرتبطة بالنص</h3><p class="hint">اختر فصلًا، ثم اطلب تحليلًا يربط الملاحظات بشواهد واقعية من نصك، دون كتابة بديلة.</p><button class="primary" data-action="analyze-intelligence" data-scope="critique">تحليل الفصل المختار</button>${(S.intel?.reviews||[]).slice(0,5).map(x=>`<button class="soft-btn" data-action="show-intelligence" data-id="${x.id}">مراجعة سابقة — ${esc(S.sections.find(s=>s.id===x.section_id)?.title||"مشهد سابق")}</button>`).join("")}</div><div class="notice">المدرب أداة توجيه وتأمل. لا يمنح درجة جودة أدبية، ولا يعتبر تعبئة الحقول برهانًا على تحسن النص.</div><div class="grid" style="margin-top:18px">${tasks.map(([name,q],i)=>`<div class="card"><span class="pill">تمرين ${i+1}</span><h3>${name}</h3><p>${q}</p><label>ملاحظتك الشخصية<textarea class="coach-answer" placeholder="فكّر في جواب السؤال، ثم عد إلى مخطوطك لتعديل ما تراه مناسبًا"></textarea></label><button class="soft-btn" data-action="coach-next">متابعة العمل</button></div>`).join('')}</div><div class="card" style="margin-top:18px"><h3>تحتاج إلى مناقشة نقدية أدق؟</h3><p>شارك مقطعًا تحدده بنفسك مع المساعد الذكي بعد موافقتك، واطلب منه أسئلة تفسيرية بدل كتابة بديلة.</p><button class="primary" data-action="tab" data-tab="chat">افتح المساعد الذكي</button></div><div id="coachTracking" class="card" style="margin-top:18px"><h3>تدريباتك الشخصية</h3><p>جارٍ تحميل سجل المهارات...</p></div>`}
 function checkpointPage(){const c=S.draftProject.checkpoint||{};const progress=S.intel?.progress||{};const active=S.sections.find(x=>x.id===progress.section_id);return `<div class="card"><h3>آخر موضع محفوظ تلقائيًا</h3><p>${active?esc(active.title):'الأفكار الحرة'} — الموضع ${Number(progress.cursor_offset||0)}</p><button class="primary" data-action="resume-location">استئناف الكتابة</button><p class="hint">الملاحظات أدناه اختيارية لإضافة ما أردت فعله لاحقًا.</p></div>`+`<div class="grid two"><div class="card"><h3>أين توقفت؟</h3><p>اترك رسالة لنفسك قبل الانقطاع. عند العودة ستجد الخطوة التالية وموقعك دون إعادة قراءة المخطوط كاملاً.</p><label>المقطع أو المشهد<select id="cpSection" data-checkpoint-field="section_id"><option value="">لا يوجد مقطع محدد</option>${S.sections.map(s=>`<option value="${s.id}" ${Number(c.section_id)===s.id?'selected':''}>${esc(s.title)}</option>`).join('')}</select></label><label>ما الذي أنجزته؟<textarea data-checkpoint-field="summary" placeholder="وصلت إلى قرار الشخصية في المشهد الثالث...">${esc(c.summary||'')}</textarea></label><label>ما الخطوة التالية؟<textarea data-checkpoint-field="next" placeholder="سأراجع دافع البطل قبل بدء الحوار...">${esc(c.next||'')}</textarea></label><label>ما السؤال الذي لم تحسمه؟<textarea data-checkpoint-field="question" placeholder="هل ستكشف الشخصية الحقيقة الآن أم لاحقًا؟">${esc(c.question||'')}</textarea></label><button class="primary" data-action="save-project">حفظ نقطة التوقف</button></div><div class="card"><h3>بطاقة العودة</h3><p class="muted">بعد فترة توقف، ابدأ من هنا بدل البحث عن آخر فكرة.</p><div class="aside-note"><b>آخر ما أُنجز</b><p>${esc(c.summary||'لا توجد نقطة توقف مسجلة')}</p><b>الخطوة القادمة</b><p>${esc(c.next||'لم تحدد بعد')}</p><b>سؤال معلّق</b><p>${esc(c.question||'—')}</p></div><button class="soft-btn" style="margin-top:17px" data-action="resume">الانتقال إلى موقع الكتابة</button></div></div>`}
 function chatPage(){const st=S.project.structure||{};return `<div class="page-layout"><div class="writer-main"><div class="notice">المحادثة متخصصة في ${kindLabel()}. أنت صاحب النص: المساعد يسأل وينظم ويقترح، ولا ينشئ فصلًا أو مشهدًا جاهزًا. لا ترسل أي نص لم تختر مشاركته.</div><div class="between" style="margin-top:12px"><span class="hint">يمكنك حذف المحادثة المخزنة في أي وقت</span><button class="small-btn danger" data-action="clear-chat">حذف تاريخ المحادثة</button></div><div id="chatWindow" class="chat-window" style="margin:14px 0"><div class="bubble ai">ما الذي تعمل عليه الآن؟ صف مشكلتك بحرية. إذا لم أفهم سأطرح سؤالًا قبل اقتراح الترتيب.</div></div><form id="chatForm"><textarea id="chatMessage" rows="3" required maxlength="4000" placeholder="اسأل أو صف ما تريد فهمه... مثلا: هناك تناقض في دافع البطل وأحتاج أن أحدده"></textarea><div class="between wrap"><span class="hint">إرسال السؤال فقط هو الوضع الافتراضي.</span><button class="primary" id="chatSubmit">اسأل المساعد</button></div></form><div id="aiSuggestions"></div></div><aside class="side-stack"><div class="card"><h3>ما الذي تسمح بمشاركته؟</h3><p class="hint">البيانات المحددة فقط تُرسل إلى مزود الذكاء الاصطناعي. يمكن أن تعالج الخدمة هذه البيانات وفق سياساتها.</p><label class="checkrow"><input type="checkbox" id="shareFree"> الأفكار الحرة</label><label class="checkrow"><input type="checkbox" id="shareStructure"> بيانات البناء</label><label class="checkrow"><input type="checkbox" id="shareHistory"> آخر محادثاتك مع المساعد</label><div class="subtle-sep"></div><b style="font-size:12px">مقاطع مختارة (بحد أقصى ثلاثة)</b>${S.sections.map(s=>`<label class="checkrow"><input class="share-section" type="checkbox" value="${s.id}"> ${esc(s.title)}</label>`).join('')||'<p class="hint">أضف مقطعًا أولاً إذا أردت مشاركته</p>'}<div class="aside-note">${S.aiAvailable?'المساعد السحابي متصل بالخادم.':'لم يُفعَّل مفتاح مزود الذكاء الاصطناعي على الخادم بعد. تبقى بقية وظائف الكتابة متاحة.'}</div></div></aside></div>`}
 async function loadChat(){if(S.tab!=='chat')return;S.chat=await api('/projects/'+S.pid+'/chat');const view=$('#chatWindow');if(!view)return;view.innerHTML=S.chat.length?S.chat.map(x=>`<div class="bubble ${x.role==='user'?'user':'ai'}">${esc(x.text)}</div>`).join(''):'<div class="bubble ai">حدثني عن النص الذي تعمل عليه. أسأل عند الغموض وأساعدك على اتخاذ قراراتك.</div>';view.scrollTop=view.scrollHeight}
@@ -67,7 +67,7 @@ async function flush(){clearTimeout(S.timer);while(S.saving)await new Promise(re
 async function navigate(tab){if(!S.pid)return; if(!await flush()){modal('<h3>تعديلات لم تُحفظ</h3><p>لن ننتقل قبل حماية عملك. نزّل نسخة إنقاذ ثم عالج مشكلة الاتصال أو التعارض.</p><button class="primary" data-action="rescue-draft">إنقاذ التعديلات</button><button class="soft-btn" data-action="close-modal">إغلاق</button>');return}await persistProgressNow();S.tab=tab;renderProject()}
 async function exportProject(){if(!S.pid){toast('افتح مشروعًا أولًا');return}if(!await flush()){backupDraft();return}try{const data=await api('/projects/'+S.pid+'/export');download('مساحة_الكاتب_'+S.project.title.replace(/[^\w\u0600-\u06FF-]/g,'_')+'.json',JSON.stringify(data,null,2))}catch(e){toast(e.message)}}
 function createBlock(){S.draftSection.blocks.push({type:'action',text:''});mark('section');$('#blockList').insertAdjacentHTML('beforeend',blockRow({type:'action',text:''},S.draftSection.blocks.length-1))}
-async function clickHandler(e){const a=e.target.closest('[data-action]');if(!a)return;const action=a.dataset.action;const id=Number(a.dataset.id);try{if(action==='close-modal'){closeModal();return}if(action==='docx-export'){await exportDocx();return}if(action==='docx-import'){$('#docxFile').click();return}if(action==='literary-review'){await runLiteraryReview();return}if(action==='show-narrative-memory'){await showNarrativeMemory();return}if(action==='update-finding'){await changeFinding(id,a.dataset.state);return}if(action==='resume-location'){await resumeLocation();return}if(action==='edit-summary'){editSummary();return}if(action==='analyze-intelligence'){await runIntelligence(a.dataset.scope);return}if(action==='show-intelligence'){const result=[...(S.intel?.drafts||[]),...(S.intel?.reviews||[])].find(x=>x.id===id);if(result)showIntelligenceDraft(result);return}if(action==='apply-intelligence'){await applyIntelligence(id);return}if(action==='dismiss-intelligence'){await dismissIntelligence(id);return}if(action==='copy-recovery'){const code=$('#recoveryCode')?.textContent;if(code){await navigator.clipboard.writeText(code);toast('نُسخ رمز الاستعادة')}return}if(action==='report'){modal('<h3>الإبلاغ عن مشكلة أو مقترح</h3><p class="hint">استخدم بيانات مصطنعة، ولا تضف أي مخطوط حقيقي أو بيانات شخصية في البلاغ.</p><form id="feedbackForm"><label>نوع الملاحظة<select name="category"><option value="bug">خطأ تقني</option><option value="usability">صعوبة استخدام</option><option value="idea">مقترح تطوير</option></select></label><label>عنوان الملاحظة<input name="subject" minlength="4" maxlength="140" required></label><label>ماذا حدث وما الذي توقعته؟<textarea name="detail" minlength="10" maxlength="4000" required></textarea></label><button class="primary">إرسال للإدارة</button></form>');return}if(action==='guide'){showGuide();return}if(action==='my-review-log'){const rows=await api('/pilot/my-review-log');modal('<h3>سجل اطلاع الإدارة</h3><p class="hint">آخر 40 عملية مراجعة.</p>'+(rows.map(r=>'<p>'+esc(r.viewed_at)+' — '+esc(r.action)+' — '+esc(r.project_id||'—')+'</p>').join('')||'<p>لا توجد مراجعات مسجلة.</p>')+'<button class="soft-btn" data-action="close-modal">إغلاق</button>');return}if(action==='new-project'){newProjectModal();return}
+async function clickHandler(e){const a=e.target.closest('[data-action]');if(!a)return;const action=a.dataset.action;const id=Number(a.dataset.id);try{if(action==='close-modal'){closeModal();return}if(action==='docx-export'){await exportDocx();return}if(action==='epub-export'){await exportEpub();return}if(action==='manuscript-search'){showManuscriptSearch();return}if(action==='pin-milestone'){await pinWriterMilestone();return}if(action==='milestone-list'){await showMilestones();return}if(action==='milestone-restore'){await restoreMilestone(id);return}if(action==='milestone-delete'){await deleteMilestone(id);return}if(action==='search-jump'){await jumpSearchResult(id,Number(a.dataset.offset));return}if(action==='coach-start'){showCoachStart(a.dataset.code);return}if(action==='coach-finish'){showCoachFinish(id);return}if(action==='docx-import'){$('#docxFile').click();return}if(action==='literary-review'){await runLiteraryReview();return}if(action==='show-narrative-memory'){await showNarrativeMemory();return}if(action==='update-finding'){await changeFinding(id,a.dataset.state);return}if(action==='recheck-finding'){await recheckFinding(id);return}if(action==='resume-location'){await resumeLocation();return}if(action==='edit-summary'){editSummary();return}if(action==='analyze-intelligence'){await runIntelligence(a.dataset.scope);return}if(action==='show-intelligence'){const result=[...(S.intel?.drafts||[]),...(S.intel?.reviews||[])].find(x=>x.id===id);if(result)showIntelligenceDraft(result);return}if(action==='apply-intelligence'){await applyIntelligence(id);return}if(action==='dismiss-intelligence'){await dismissIntelligence(id);return}if(action==='copy-recovery'){const code=$('#recoveryCode')?.textContent;if(code){await navigator.clipboard.writeText(code);toast('نُسخ رمز الاستعادة')}return}if(action==='report'){modal('<h3>الإبلاغ عن مشكلة أو مقترح</h3><p class="hint">استخدم بيانات مصطنعة، ولا تضف أي مخطوط حقيقي أو بيانات شخصية في البلاغ.</p><form id="feedbackForm"><label>نوع الملاحظة<select name="category"><option value="bug">خطأ تقني</option><option value="usability">صعوبة استخدام</option><option value="idea">مقترح تطوير</option></select></label><label>عنوان الملاحظة<input name="subject" minlength="4" maxlength="140" required></label><label>ماذا حدث وما الذي توقعته؟<textarea name="detail" minlength="10" maxlength="4000" required></textarea></label><button class="primary">إرسال للإدارة</button></form>');return}if(action==='guide'){showGuide();return}if(action==='my-review-log'){const rows=await api('/pilot/my-review-log');modal('<h3>سجل اطلاع الإدارة</h3><p class="hint">آخر 40 عملية مراجعة.</p>'+(rows.map(r=>'<p>'+esc(r.viewed_at)+' — '+esc(r.action)+' — '+esc(r.project_id||'—')+'</p>').join('')||'<p>لا توجد مراجعات مسجلة.</p>')+'<button class="soft-btn" data-action="close-modal">إغلاق</button>');return}if(action==='new-project'){newProjectModal();return}
 if(action==='delete-project'){
   if(!await flush())return;
   const target=S.projects.find(p=>p.id===id);if(!target)return;
@@ -80,7 +80,7 @@ if(action==='delete-project'){
 document.addEventListener('click',clickHandler);
 document.addEventListener('input',e=>{const t=e.target;if(t.dataset.projectField){S.draftProject[t.dataset.projectField]=t.value;mark('project')}if(t.dataset.structureField){S.draftProject.structure[t.dataset.structureField]=t.value;mark('project')}if(t.dataset.checkpointField){S.draftProject.checkpoint=S.draftProject.checkpoint||{};S.draftProject.checkpoint[t.dataset.checkpointField]=t.value;mark('project')}if(t.dataset.sectionField){S.draftSection[t.dataset.sectionField]=t.value;mark('section')}if(t.hasAttribute('data-block-text')){S.draftSection.blocks[Number(t.dataset.blockText)].text=t.value;mark('section')}});
 document.addEventListener('change',e=>{const t=e.target;if(t.id==='autoUnderstand'){S.autoUnderstand=t.checked;if(S.autoUnderstand)scheduleAutoUnderstanding();else clearTimeout(S.autoTimer)}if(t.hasAttribute('data-block-type')){S.draftSection.blocks[Number(t.dataset.blockType)].type=t.value;mark('section')}if(t.classList.contains('share-section')){const checked=[...document.querySelectorAll('.share-section:checked')];if(checked.length>3){t.checked=false;toast('اختر ثلاثة مقاطع كحد أقصى')}}if(t.dataset.checkpointField){S.draftProject.checkpoint=S.draftProject.checkpoint||{};S.draftProject.checkpoint[t.dataset.checkpointField]=t.value;mark('project')}});
-document.addEventListener('submit',async e=>{const form=e.target;if(!['createProjectForm','factForm','chatForm','deleteAccountForm','recoverForm','feedbackForm','summaryForm','researchForm'].includes(form.id))return;e.preventDefault();try{if(form.id==='researchForm'){await researchBooks(form);return}if(form.id==='summaryForm'){await saveSynopsis(form);return}if(form.id==='feedbackForm'){await api('/pilot/feedback',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(form)))});closeModal();toast('استلمت الإدارة ملاحظتك');return}if(form.id==='recoverForm'){const data=Object.fromEntries(new FormData(form));const r=await api('/auth/recover',{method:'POST',body:JSON.stringify(data)});showRecoveryCode(r.recovery_code);toast('تغيرت كلمة المرور وأُلغيت الجلسات السابقة');return}if(form.id==='createProjectForm'){
+document.addEventListener('submit',async e=>{const form=e.target;if(!['createProjectForm','factForm','chatForm','deleteAccountForm','recoverForm','feedbackForm','summaryForm','researchForm','coachStartForm','coachFinishForm','manuscriptSearchForm'].includes(form.id))return;e.preventDefault();try{if(form.id==='manuscriptSearchForm'){await searchWriterManuscript(form);return}if(form.id==='coachStartForm'){await beginCoachSession(form);return}if(form.id==='coachFinishForm'){await finishCoachSession(form);return}if(form.id==='researchForm'){await researchBooks(form);return}if(form.id==='summaryForm'){await saveSynopsis(form);return}if(form.id==='feedbackForm'){await api('/pilot/feedback',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(form)))});closeModal();toast('استلمت الإدارة ملاحظتك');return}if(form.id==='recoverForm'){const data=Object.fromEntries(new FormData(form));const r=await api('/auth/recover',{method:'POST',body:JSON.stringify(data)});showRecoveryCode(r.recovery_code);toast('تغيرت كلمة المرور وأُلغيت الجلسات السابقة');return}if(form.id==='createProjectForm'){
  if(S.creating)return;
  S.creating=true;
  const button=form.querySelector('button.primary');button.disabled=true;button.textContent='جارٍ فتح المشروع...';
@@ -246,12 +246,14 @@ function literaryPage(){
  const rows=(S.literary||[]).map(x=>`<div class="card" style="margin-bottom:12px">
   <p><b>${esc(x.observation)}</b></p>
   <p class="hint">الشاهد: «${esc(x.evidence)}» — الفصل ${x.section_id}، الإصدار ${x.source_version}</p>
+  <p class="hint">تصنيف الملاحظة: ${({objective_candidate:'مشكلة موضوعية محتملة',narrative_hypothesis:'فرضية سردية تحتاج مراجعة',interpretive_opinion:'قراءة نقدية قابلة للنقاش'})[x.category]||'تحتاج مراجعة'}</p>
+  ${(x.citations||[]).length?`<div class="notice">${x.citations.map(c=>`<p><small>شاهد من الفصل ${esc(c.section_id)}، الإصدار ${esc(c.version)}: «${esc(c.quote)}»</small></p>`).join('')}</div>`:''}
   <p>الأثر: ${esc(x.impact)}</p><p>خطوة للكاتب: ${esc(x.action)}</p>
   <p class="hint">${x.stale?'تغيّر المصدر منذ إصدار هذه الملاحظة؛ أعد الفحص.':'هذه ملاحظة نقدية مرشحة وليست حكمًا قطعيًا.'}</p>
   <div class="btn-row">
    <button class="soft-btn" data-action="update-finding" data-id="${x.id}" data-state="accepted">أقبل الملاحظة</button>
    <button class="soft-btn" data-action="update-finding" data-id="${x.id}" data-state="dismissed">لا تنطبق على عملي</button>
-   <button class="soft-btn" data-action="update-finding" data-id="${x.id}" data-state="resolved">عالجتها</button>
+   <button class="soft-btn" data-action="update-finding" data-id="${x.id}" data-state="resolved">عالجتها</button><button class="soft-btn" data-action="recheck-finding" data-id="${x.id}">تحقق من صلاحية الشواهد</button>
   </div><small>الحالة: ${esc(x.state)}</small></div>`).join('');
  return `<div class="page-layout"><div class="writer-main"><div class="card">
  <h3>مراجعة أدبية مسندة بالنص</h3>
@@ -340,4 +342,176 @@ async function showNarrativeMemory(){
   (items||'<p>لم تُسجّل وقائع بعد.</p>')+'<h4>الفصول</h4>'+
   (timeline||'<p>لا فصول بعد.</p>')+
   '<button class="soft-btn" data-action="close-modal">إغلاق</button>');
+}
+
+
+async function refreshCoach(){
+ if(!S.pid)return;
+ const pid=S.pid;
+ const data=await api('/projects/'+pid+'/coach');
+ if(pid!==S.pid)return;
+ S.coachData=data;
+ const panel=$('#coachTracking');
+ if(panel)panel.innerHTML=coachTrackingPage();
+}
+function coachTrackingPage(){
+ const data=S.coachData||{practices:[],sessions:[],completed_count:0};
+ const ongoing=data.sessions.filter(x=>x.state==='in_progress');
+ const active=ongoing.map(x=>'<div class="card"><b>'+esc(x.skill)+'</b>'+
+   '<p class="hint">تقييمك لنفسك قبل التمرين: '+x.before_rating+'/5</p>'+
+   '<button class="soft-btn" data-action="coach-finish" data-id="'+x.id+'">تسجيل التأمل بعد التطبيق</button></div>').join('');
+ const cards=data.practices.map(p=>'<div class="card"><h4>'+esc(p.title)+'</h4>'+
+   '<p>'+esc(p.instructions)+'</p><p class="hint">'+esc(p.assessment)+'</p>'+
+   '<button class="soft-btn" data-action="coach-start" data-code="'+esc(p.code)+'">بدء تمرين وتسجيل مستواي</button></div>').join('');
+ const history=data.sessions.filter(x=>x.state==='completed').slice(0,15).map(x=>
+   '<div class="list-item"><div><b>'+esc(x.skill)+'</b><p>'+
+   esc(x.author_reflection)+'</p><small>تقييم ذاتي: '+x.before_rating+' ← '+x.after_rating+
+   '</small></div></div>').join('');
+ return '<h3>مسارك التدريبي</h3><p class="hint">'+
+   esc(data.measurement_note||'قياس ذاتي')+'</p>'+
+   '<p>جلسات مكتملة: '+Number(data.completed_count||0)+'</p>'+
+   (active?'<h4>تمارين بدأت بها</h4><div class="grid">'+active+'</div>':'')+
+   '<h4>اختر مهارة للتدرب عليها</h4><div class="grid">'+cards+'</div>'+
+   '<h4>سجل تقدمك</h4><div class="list">'+
+   (history||'<p>لا توجد تدريبات مكتملة بعد.</p>')+'</div>';
+}
+function showCoachStart(code){
+ const item=S.coachData?.practices?.find(x=>x.code===code);
+ if(!item)return;
+ modal('<h3>ابدأ تدريبًا: '+esc(item.title)+'</h3><p>'+esc(item.instructions)+
+   '</p><form id="coachStartForm"><input type="hidden" name="code" value="'+esc(code)+'">'+
+   '<label>كيف تقيّم معرفتك بهذه المهارة قبل التطبيق؟ (1–5)'+
+   '<select name="before_rating" required><option value="1">1 — أحتاج تدريبًا كبيرًا</option>'+
+   '<option value="2">2</option><option value="3" selected>3</option>'+
+   '<option value="4">4</option><option value="5">5 — واثق من الممارسة</option></select></label>'+
+   '<p class="hint">التقييم ذاتي، ولا يمثل حكمًا آليًا على جودة الكتابة.</p>'+
+   '<button class="primary">ابدأ</button></form>');
+}
+async function beginCoachSession(form){
+ const data={practice_code:form.querySelector('[name=code]').value,
+   before_rating:Number(form.querySelector('[name=before_rating]').value)};
+ await api('/projects/'+S.pid+'/coach/begin',{method:'POST',body:JSON.stringify(data)});
+ closeModal();await refreshCoach();toast('حُفظ التدريب؛ يمكنك تنفيذه في مخطوطك');
+}
+function showCoachFinish(id){
+ const session=S.coachData?.sessions?.find(x=>x.id===id);
+ if(!session)return;
+ modal('<h3>تقييم تطورك بعد التمرين</h3><form id="coachFinishForm">'+
+   '<input type="hidden" name="session_id" value="'+id+'">'+
+   '<label>تقييمك الذاتي الآن <select required name="after_rating">'+
+   [1,2,3,4,5].map(n=>'<option value="'+n+'" '+(n===session.before_rating?'selected':'')+'>'+n+'/5</option>').join('')+
+   '</select></label><label>ماذا اكتشفت أو غيرت في طريقة تفكيرك؟'+
+   '<textarea name="author_reflection" required minlength="3" maxlength="3000"></textarea></label>'+
+   '<label>ملاحظات خاصة (اختياري)<textarea name="author_notes" maxlength="3000"></textarea></label>'+
+   '<p class="hint">هذا توثيق لتجربتك الشخصية، وليس إثباتًا آليًا لتحسن النص.</p>'+
+   '<button class="primary">حفظ النتيجة</button></form>');
+}
+async function finishCoachSession(form){
+ const id=Number(form.querySelector('[name=session_id]').value);
+ const data={after_rating:Number(form.querySelector('[name=after_rating]').value),
+   author_reflection:form.querySelector('[name=author_reflection]').value,
+   author_notes:form.querySelector('[name=author_notes]').value};
+ await api('/projects/'+S.pid+'/coach/sessions/'+id+'/complete',
+   {method:'PUT',body:JSON.stringify(data)});
+ closeModal();await refreshCoach();toast('حُفظت تجربتك في سجل مهاراتك');
+}
+async function exportEpub(){
+ if(!S.pid)return;
+ if(!await flush())return;
+ const response=await fetch('/api/projects/'+S.pid+'/manuscript/epub',
+   {credentials:'same-origin'});
+ if(!response.ok)throw Error('تعذر إنشاء ملف EPUB');
+ const url=URL.createObjectURL(await response.blob());
+ const a=document.createElement('a');a.href=url;
+ a.download='مخطوط_'+S.project.title+'.epub';
+ document.body.appendChild(a);a.click();a.remove();
+ setTimeout(()=>URL.revokeObjectURL(url),5000);
+}
+
+
+async function recheckFinding(id){
+ if(!S.pid)return;
+ const data=await api('/projects/'+S.pid+'/literary/findings/'+id+'/recheck');
+ const status=data.context_status==='changed'?'تغيّرت بعض الفصول التي استُخدمت في التحليل':
+   data.context_status==='current'?'لم تتغير الفصول التي استُخدمت في التحليل':
+   'لا توجد معلومات كافية عن حالة الفصول المرجعية';
+ modal('<h3>التحقق من مصادر الملاحظة</h3><p>'+esc(status)+'</p>'+
+  '<p>وجود الشاهد حرفيًا في الفصل الحالي: <b>'+
+  (data.evidence_still_present?'نعم':'لا')+'</b></p>'+
+  '<p class="hint">'+esc(data.notice)+'</p>'+
+  '<button class="primary" data-action="close-modal">فهمت</button>');
+}
+
+
+function showManuscriptSearch(){
+ if(!S.pid)return;
+ modal('<h3>بحث في جميع الفصول</h3><p class="hint">بحث حرفي داخل مخطوطك الحالي. لا يُرسل النص خارج المنصة.</p>'+
+ '<form id="manuscriptSearchForm"><label>كلمة أو عبارة<input name="query" required minlength="2" maxlength="120"></label>'+
+ '<button class="primary">ابحث</button></form>'+
+ '<div id="manuscriptSearchResults"></div><button class="soft-btn" data-action="close-modal">إغلاق</button>');
+}
+async function searchWriterManuscript(form){
+ const query=form.querySelector('[name=query]').value.trim();
+ const result=await api('/projects/'+S.pid+'/manuscript-tools/search?q='+encodeURIComponent(query));
+ const entries=result.hits.map(hit=>'<div class="list-item"><div><b>'+esc(hit.title)+'</b>'+
+  '<p>'+esc(hit.excerpt)+'</p><small>موضع النص: '+hit.offset+'</small></div>'+
+  '<button class="soft-btn" data-action="search-jump" data-id="'+hit.section_id+
+  '" data-offset="'+hit.offset+'">فتح الفصل</button></div>').join('');
+ const target=$('#manuscriptSearchResults');
+ if(target)target.innerHTML='<h4>النتائج: '+result.total_matched+
+   (result.results_truncated?' (بعض النتائج غير معروضة)':'')+
+   '</h4><div class="list">'+(entries||'<p>لا توجد نتائج مطابقة.</p>')+'</div>';
+}
+async function jumpSearchResult(sectionId,offset){
+ if(!S.pid)return;
+ if(!await flush())return;
+ closeModal();S.sid=sectionId;S.tab='manuscript';renderProject();
+ const editor=$('#editorBody');
+ if(editor){
+  editor.focus();
+  const position=Math.min(Math.max(offset,0),editor.value.length);
+  editor.setSelectionRange(position,position);
+  editor.scrollIntoView({block:'center',behavior:'smooth'});
+ }
+}
+async function pinWriterMilestone(){
+ if(!S.pid||!selected()){toast('اختر فصلًا لتثبيت نسخته');return}
+ if(!await flush())return;
+ const label=prompt('اسم النسخة المرجعية، مثل «قبل المراجعة التحريرية»:');
+ if(!label||!label.trim())return;
+ const sec=selected();
+ const result=await api('/projects/'+S.pid+'/manuscript-tools/milestones',{
+  method:'POST',body:JSON.stringify({section_id:sec.id,section_version:sec.version,label:label.trim()})});
+ toast('حُفظت نسخة مرجعية مستقلة عن المراجعات الثلاث: '+result.label);
+}
+async function showMilestones(){
+ if(!S.pid)return;
+ const rows=await api('/projects/'+S.pid+'/manuscript-tools/milestones');
+ const html=rows.map(x=>'<div class="list-item"><div><b>'+esc(x.label)+'</b>'+
+  '<p>'+esc(x.title)+'</p><small>نسخة الفصل: '+x.version+'</small></div>'+
+  '<div class="btn-row"><button class="soft-btn" data-action="milestone-restore" data-id="'+x.id+
+  '">استعادة</button><button class="small-btn danger" data-action="milestone-delete" data-id="'+x.id+
+  '">حذف</button></div></div>').join('');
+ modal('<h3>النسخ المرجعية المحفوظة</h3><p class="hint">هذه النسخ مستقلة عن آخر ثلاث مراجعات. استعادة نسخة تحفظ الحالة الحالية في سجل المراجعات المعتاد.</p>'+
+  '<div class="list">'+(html||'<p>لا توجد نسخ مثبّتة بعد.</p>')+'</div>'+
+  '<button class="soft-btn" data-action="close-modal">إغلاق</button>');
+}
+async function restoreMilestone(id){
+ if(!await flush())return;
+ const versions=await api('/projects/'+S.pid+'/manuscript-tools/milestones');
+ const pinned=versions.find(x=>x.id===id);
+ if(!pinned)return;
+ const sec=S.sections.find(x=>x.id===pinned.section_id);
+ if(!sec){toast('الفصل المرجعي لم يعد موجودًا');return}
+ if(!confirm('استعادة «'+pinned.label+'»؟ سيتم حفظ نسختك الحالية قبل الاستعادة.'))return;
+ const restored=await api('/projects/'+S.pid+'/manuscript-tools/milestones/'+id+'/restore',
+  {method:'POST',body:JSON.stringify({current_version:sec.version})});
+ S.sections=S.sections.map(x=>x.id===restored.id?restored:x);
+ closeModal();S.sid=restored.id;S.tab='manuscript';renderProject();
+ toast('تمت الاستعادة مع حفظ النسخة الحالية في سجل المراجعات');
+}
+async function deleteMilestone(id){
+ if(!confirm('حذف النسخة المرجعية نهائيًا؟ لا يحذف ذلك المخطوط الحالي.'))return;
+ await api('/projects/'+S.pid+'/manuscript-tools/milestones/'+id,{method:'DELETE',body:'{}'});
+ await showMilestones();toast('حُذفت النسخة المرجعية فقط');
 }

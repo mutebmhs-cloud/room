@@ -435,10 +435,16 @@ async def chat(pid:int,data:ChatRequest,request:Request,user:User=Depends(auth),
 def export_project(pid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     p=owned_project(db,user,pid)
     from .writer_intelligence import SectionSynopsis, progress_json
-    from .literary_core import LiteraryFinding
+    from .literary_core import LiteraryFinding, FindingContextSnapshot
+    from .writing_coach import PracticeEntry
+    from .manuscript_tools import WriterMilestone
     sections=db.scalars(select(Section).where(Section.project_id==pid).order_by(Section.position,Section.id)).all()
     synopses=db.scalars(select(SectionSynopsis).where(SectionSynopsis.project_id==pid)).all()
     literary=db.scalars(select(LiteraryFinding).where(LiteraryFinding.project_id==pid)).all()
+    context_rows=db.scalars(select(FindingContextSnapshot).where(FindingContextSnapshot.project_id==pid)).all()
+    contexts={row.finding_id:_json(row.sources_json,[]) for row in context_rows}
+    coaching=db.scalars(select(PracticeEntry).where(PracticeEntry.project_id==pid)).all()
+    milestones=db.scalars(select(WriterMilestone).where(WriterMilestone.project_id==pid)).all()
     return {'format':'writer-cloud-v2','project':{**proj_json(p),'kind':p.kind},
             'sections':[sec_json(x) for x in sections],
             'facts':[fact_json(x,{s.id:s.version for s in sections}) for x in db.scalars(select(Fact).where(Fact.project_id==pid))],
@@ -451,8 +457,17 @@ def export_project(pid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)
             'progress':progress_json(db,pid),
             'literary_findings':[{'section_id':x.section_id,'source_version':x.source_version,
                 'source_hash':x.source_hash,'observation':x.observation,'evidence':x.evidence,
-                'impact':x.impact,'action':x.action,'category':x.category,'state':x.state}
-                for x in literary]}
+                'impact':x.impact,'action':x.action,'category':x.category,'state':x.state,
+                'context_sources':contexts.get(x.id,[])}
+                for x in literary],
+            'coaching_sessions':[{'practice_code':x.practice_code,'skill':x.skill,
+                'state':x.state,'before_rating':x.before_rating,
+                'after_rating':x.after_rating,'author_notes':x.author_notes,
+                'author_reflection':x.author_reflection}
+                for x in coaching],
+            'pinned_milestones':[{'section_id':x.section_id,'version':x.version,
+                'label':x.label,'title':x.title,'body':x.body,
+                'blocks':_json(x.blocks,[])} for x in milestones]}
 
 class ImportData(BaseModel):
     model_config=ConfigDict(extra='forbid')
@@ -468,7 +483,9 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
     synopses=raw.get('synopses',[]) if fmt=='writer-cloud-v2' else []
     progress=raw.get('progress',None) if fmt=='writer-cloud-v2' else None
     literary_findings=raw.get('literary_findings',[]) if fmt=='writer-cloud-v2' else []
-    if not isinstance(revs,list) or len(revs)>10000 or not isinstance(chats,list) or len(chats)>3000 or not isinstance(synopses,list) or len(synopses)>400 or not isinstance(literary_findings,list) or len(literary_findings)>1000: raise HTTPException(422,'عدد سجلات النسخة الاحتياطية غير صالح')
+    coaching_sessions=raw.get('coaching_sessions',[]) if fmt=='writer-cloud-v2' else []
+    pinned_milestones=raw.get('pinned_milestones',[]) if fmt=='writer-cloud-v2' else []
+    if not isinstance(revs,list) or len(revs)>10000 or not isinstance(chats,list) or len(chats)>3000 or not isinstance(synopses,list) or len(synopses)>400 or not isinstance(literary_findings,list) or len(literary_findings)>1000 or not isinstance(coaching_sessions,list) or len(coaching_sessions)>2000 or not isinstance(pinned_milestones,list) or len(pinned_milestones)>20: raise HTTPException(422,'عدد سجلات النسخة الاحتياطية غير صالح')
     if len(json.dumps(raw,ensure_ascii=False).encode('utf-8'))>30_000_000: raise HTTPException(413,'النسخة الاحتياطية كبيرة جدًا')
     proj=raw['project']; kind=proj.get('kind')
     if kind not in KINDS or not isinstance(proj.get('title'),str) or not (1<=len(proj['title'])<=240) or not proj['title'].strip() or len(raw['sections'])>400 or len(raw['facts'])>3000: raise HTTPException(422,'بيانات المشروع غير صالحة')
@@ -523,6 +540,48 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
                     raise ValueError('literary finding field')
             if item['state'] not in ('open','discussed','accepted','dismissed','resolved'):
                 raise ValueError('literary finding state')
+            references=item.get('context_sources',[])
+            if not isinstance(references,list) or len(references)>12:
+                raise ValueError('literary context size')
+            for reference in references:
+                if (not isinstance(reference,dict) or type(reference.get('section_id')) is not int or
+                    type(reference.get('version')) is not int or reference['version']<1 or
+                    not isinstance(reference.get('source_hash'),str) or len(reference['source_hash'])!=64):
+                    raise ValueError('literary context reference')
+                quotes=reference.get('quotes',[])
+                if (not isinstance(quotes,list) or len(quotes)>2 or
+                    any(not isinstance(q,str) or len(q)>650 for q in quotes)):
+                    raise ValueError('literary context quotations')
+        total_pinned_bytes=0
+        for pinned in pinned_milestones:
+            if (not isinstance(pinned,dict) or pinned.get('section_id') not in version_map or
+                type(pinned.get('version')) is not int or
+                not 1<=pinned['version']<=version_map[pinned['section_id']]):
+                raise ValueError('pinned version')
+            if (not isinstance(pinned.get('label'),str) or not 2<=len(pinned['label'])<=120 or
+                not isinstance(pinned.get('title'),str) or not 1<=len(pinned['title'])<=240 or
+                not isinstance(pinned.get('body'),str) or len(pinned['body'])>450000 or
+                not isinstance(pinned.get('blocks'),list)):
+                raise ValueError('pinned content')
+            validate_blocks(pinned['blocks'])
+            total_pinned_bytes+=len(pinned['body'].encode())+len(json.dumps(pinned['blocks'],ensure_ascii=False).encode())
+        if total_pinned_bytes>8_000_000:
+            raise ValueError('pinned storage limit')
+        for item in coaching_sessions:
+            if not isinstance(item,dict) or item.get('state') not in ('in_progress','completed'):
+                raise ValueError('coaching session state')
+            if not isinstance(item.get('practice_code'),str) or len(item['practice_code'])>40 or not isinstance(item.get('skill'),str) or len(item['skill'])>120:
+                raise ValueError('coaching session identity')
+            if type(item.get('before_rating')) is not int or not 1<=item['before_rating']<=5:
+                raise ValueError('coaching session rating')
+            after=item.get('after_rating')
+            if after is not None and (type(after) is not int or not 1<=after<=5):
+                raise ValueError('coaching session result')
+            if item['state']=='completed' and after is None:
+                raise ValueError('completed session without rating')
+            for field in ('author_notes','author_reflection'):
+                if not isinstance(item.get(field,''),str) or len(item.get(field,''))>3000:
+                    raise ValueError('coaching text')
         for msg in chats:
             if not isinstance(msg,dict) or msg.get('role') not in ('user','assistant') or not isinstance(msg.get('text'),str) or len(msg['text'])>6000 or not isinstance(msg.get('proposals'),list) or len(json.dumps(msg['proposals'],ensure_ascii=False))>12000: raise ValueError('chat')
         for f in raw['facts']:
@@ -567,13 +626,34 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
             db.add(WriterProgress(project_id=pp.id,user_id=user.id,
                 section_id=old_map.get(progress.get('section_id')),
                 tab=progress['tab'],cursor_offset=progress.get('cursor_offset',0)))
-        from .literary_core import LiteraryFinding
+        from .literary_core import LiteraryFinding, FindingContextSnapshot
         for finding in literary_findings:
-            db.add(LiteraryFinding(project_id=pp.id,section_id=old_map[finding['section_id']],
+            row=LiteraryFinding(project_id=pp.id,section_id=old_map[finding['section_id']],
                 source_version=finding['source_version'],source_hash=finding['source_hash'],
                 observation=finding['observation'],evidence=finding['evidence'],
                 impact=finding['impact'],action=finding['action'],category=finding['category'],
-                state=finding['state']))
+                state=finding['state'])
+            db.add(row);db.flush()
+            references=[{'section_id':old_map.get(ref['section_id'],-1),
+                'version':ref['version'],'source_hash':ref['source_hash'],
+                'quotes':ref.get('quotes',[])}
+                for ref in finding.get('context_sources',[])]
+            if references:
+                db.add(FindingContextSnapshot(finding_id=row.id,project_id=pp.id,
+                    sources_json=json.dumps(references,ensure_ascii=False)))
+        from .manuscript_tools import WriterMilestone
+        for pinned in pinned_milestones:
+            db.add(WriterMilestone(project_id=pp.id,section_id=old_map[pinned['section_id']],
+                version=pinned['version'],label=pinned['label'].strip(),
+                title=pinned['title'],body=pinned['body'],
+                blocks=json.dumps(pinned['blocks'],ensure_ascii=False)))
+        from .writing_coach import PracticeEntry
+        for exercise in coaching_sessions:
+            db.add(PracticeEntry(project_id=pp.id,practice_code=exercise['practice_code'],
+                skill=exercise['skill'],state=exercise['state'],
+                before_rating=exercise['before_rating'],after_rating=exercise.get('after_rating'),
+                author_notes=exercise.get('author_notes',''),
+                author_reflection=exercise.get('author_reflection','')))
         for msg in chats:
             db.add(Chat(project_id=pp.id,role=msg['role'],text=msg['text'],proposals=json.dumps(msg['proposals'],ensure_ascii=False)))
         for f in raw['facts']:
@@ -655,3 +735,9 @@ from .literary_core import router as literary_router
 app.include_router(literary_router)
 from .manuscript_interchange import router as manuscript_router
 app.include_router(manuscript_router)
+from .writing_coach import router as coach_router
+app.include_router(coach_router)
+from .epub_export import router as epub_router
+app.include_router(epub_router)
+from .manuscript_tools import router as manuscript_tools_router
+app.include_router(manuscript_tools_router)
