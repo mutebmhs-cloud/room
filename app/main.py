@@ -43,11 +43,18 @@ async def lifespan(app):
         import asyncio
         from .ai_live_diagnostic import evaluate_live_synthetic
         diagnostic_task=asyncio.create_task(evaluate_live_synthetic())
+    connection_task=None
+    if os.getenv("WRITER_GROQ_NETWORK_PROBE")=="1":
+        import asyncio
+        from .groq_connectivity import check_groq_connection
+        connection_task=asyncio.create_task(check_groq_connection())
     try:
         yield
     finally:
         if diagnostic_task and not diagnostic_task.done():
             diagnostic_task.cancel()
+        if connection_task and not connection_task.done():
+            connection_task.cancel()
 app=FastAPI(lifespan=lifespan,title='مساحة الكاتب',docs_url=None if IS_PROD else '/api/docs',redoc_url=None,openapi_url=None if IS_PROD else '/api/openapi.json')
 if IS_PROD:
     hosts=[v.strip() for v in os.getenv('APP_ALLOWED_HOSTS','').split(',') if v.strip()]
