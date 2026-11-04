@@ -25,7 +25,7 @@ async def evaluate_live_synthetic():
     for case_id in CASES:
         case=indexed[case_id]
         try:
-            result=await generate_analysis(case["kind"],"critique",case["text"])
+            result=await asyncio.wait_for(generate_analysis(case["kind"],"critique",case["text"]),timeout=25)
             feedback=result.get("feedback",[])
             grounded=[x for x in feedback if isinstance(x,dict)
                 and isinstance(x.get("evidence"),str)
@@ -36,6 +36,9 @@ async def evaluate_live_synthetic():
                   " total="+str(len(feedback))+
                   " expected_clean="+str(bool(case["clean"])).lower(),
                   flush=True)
+        except asyncio.TimeoutError:
+            print("WRITER_AI_LIVE_DIAG case="+case_id+
+                  " response_valid=false error_kind=Timeout25s",flush=True)
         except HTTPException as exc:
             print("WRITER_AI_LIVE_DIAG case="+case_id+
                   " response_valid=false http_status="+str(exc.status_code),
