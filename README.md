@@ -2,6 +2,11 @@
 
 منصة تجريبية عربية لمساعدة كاتب الرواية والقصة على **فهم مشروعه، تطويره، وحفظ تقدم عمله** دون توليد العمل الأدبي نيابة عنه. محرر السيناريو والأنواع الأخرى متاحان، لكن العمق النقدي المتخصص يحتاج اختبارات قبول مستقلة.
 
+## حالة الإصدار
+- **v4:** استرجاع أدلة من الفصول كاملة، نقد مع تصنيف وشاهدين، سجل التدريب الذاتي، Word وEPUB، بحث محلي داخل المخطوط، ونسخ مرجعية مستقلة.
+- **حالة النموذج:** يتطلب مفتاح API مستقلًا؛ غياب المفتاح يعني أن النقد الذكي غير مفعل فعلًا، حتى لو نجحت اختبارات الخادم.
+- **حالة المخطوطات الحقيقية:** غير معتمدة حتى اختبار النسخ والاستعادة الخارجية وحوكمة مزود النموذج.
+
 ## حالة الفروع
 - `main`: النسخة المنشورة على Render حاليًا.
 - **v3**: محرك أدبي متعدد الفصول وسجل نقد ومصادر وWord، بعد التحقق من النشر. تبقى مخطوطات المستخدمين الحقيقية خارج النسخة التجريبية حتى اعتماد النسخ الاحتياطي والخصوصية والنقد الفعلي.
@@ -21,7 +26,7 @@
 ## تشغيل محلي
 ```bash
 python -m pip install -r requirements.txt -r requirements-dev.txt
-python -m pytest -q tests/test_acceptance.py tests/test_extended.py tests/test_publish_regression.py tests/test_release_regressions.py tests/test_pilot_invites.py tests/test_writer_intelligence.py tests/test_literary_core.py
+python -m pytest -q tests/test_acceptance.py tests/test_extended.py tests/test_publish_regression.py tests/test_release_regressions.py tests/test_pilot_invites.py tests/test_writer_intelligence.py tests/test_literary_core.py tests/test_narrative_v4.py tests/test_writer_tools.py
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -35,6 +40,8 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ## الوثائق
 - [التوجه الاستراتيجي المعتمد — 3 نوفمبر 2026](docs/التوجه_الاستراتيجي_المعتمد_مساحة_الكاتب_2026-11-03.md): المرجع الأعلى لرؤية المنتج والمحاور الثلاثة ومرصد التشابه والنقد الأدبي.
+- [سجل إصدار v4: المنجز والقيود](docs/سجل_إصدار_مساحة_الكاتب_v4_2026-11-04.md).
+- [المعيار العربي للنقد الأدبي](docs/معيار_النقد_الأدبي_العربي_v1_2026-11-04.md).
 - [سجل تنفيذ v3 وحدود الاعتماد](docs/سجل_تنفيذ_مساحة_الكاتب_v3_2026-11-04.md).
 - [مرجع تطوير v2](docs/مرجع_التطوير_v2.md): البنية البرمجية والتشغيلية واختبارات الإصدار الحالي؛ يُراجع وفق التوجه المعتمد.
 - [دليل النشر](docs/النشر_على_الانترنت.md).
