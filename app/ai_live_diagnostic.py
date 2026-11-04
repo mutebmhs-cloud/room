@@ -35,6 +35,7 @@ async def evaluate_live_synthetic():
     print("WRITER_AI_LIVE_DIAG started provider="+provider+
           " model="+model+" cases="+str(len(cases)),flush=True)
     success=faults_detected=flagged_clean=failed=0
+    objective_clean_flags=0
     rate_limited=False
     # Throttle *synthetic* evaluations to avoid exhausting free-provider TPM.
     delay=max(0,min(30,int(os.getenv('WRITER_AI_EVAL_INTERVAL_SECONDS',
@@ -53,12 +54,15 @@ async def evaluate_live_synthetic():
             signal=bool(grounded) and any(
                 token.lower() in observations for token in case.get("expected",[]))
             if case["clean"] and grounded:flagged_clean+=1
+            if case["clean"] and any(x.get('classification')=='objective_candidate' for x in grounded):
+                objective_clean_flags+=1
             if not case["clean"] and signal:faults_detected+=1
             success+=1
             counts=result.get("diagnostic_counts",{})
             print("WRITER_AI_LIVE_DIAG case="+case["id"]+
                   " response_valid=true grounded="+str(len(grounded))+
                   " model_feedback="+str(counts.get("model_feedback_count","unknown"))+
+                  " objective="+str(sum(x.get('classification')=='objective_candidate' for x in grounded))+
                   " total="+str(len(feedback))+
                   " heuristic_signal="+str(signal).lower()+
                   " clean_control="+str(bool(case["clean"])).lower(),flush=True)
@@ -82,4 +86,5 @@ async def evaluate_live_synthetic():
           " total="+str(len(cases))+" successful="+str(success)+
           " failed="+str(failed)+" rate_limited="+str(rate_limited).lower()+" potential_hits="+str(faults_detected)+
           " flagged_clean="+str(flagged_clean)+
+          " objective_clean_flags="+str(objective_clean_flags)+
           " note=heuristics_not_human_certification",flush=True)

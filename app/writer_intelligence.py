@@ -18,6 +18,7 @@ from .models import Project, Section, User, now
 from . import main as core
 from .provider_gateway import configured as ai_configured, selection as ai_selection, json_completion
 from .editorial_rubrics import specialized_instruction
+from .evidence_anchor import literal_anchor
 
 router=APIRouter(prefix='/api/projects/{pid}/intelligence',tags=['writer-intelligence'])
 FIELDS={'premise','genre','theme','protagonist','goal','obstacle','audience','logline',
@@ -198,21 +199,26 @@ async def generate_analysis(kind,scope,text,review_mode='comprehensive'):
    val=field.get('value'); evidence=field.get('evidence')
    if not isinstance(val,str) or not val.strip() or not isinstance(evidence,str):continue
    # Explicit claims must cite a substring of the source.
-   if not evidence.strip() or evidence.strip() not in text:continue
+   anchored=literal_anchor(text,evidence)
+   if not anchored:continue
    cleaned.append({'key':field['key'],'value':val[:1600],
-     'evidence':evidence[:350],'certainty':field.get('certainty','inferred')})
+     'evidence':anchored[:350],'certainty':field.get('certainty','inferred')})
   feedback=[]
   for v in result.get('feedback',[])[:6]:
    if not isinstance(v,dict):continue
    if all(isinstance(v.get(k),str) for k in ('observation','evidence','impact','action')):
-    if not v['evidence'].strip() or v['evidence'].strip() not in text:continue
+    quote=literal_anchor(text,v['evidence'])
+    if not quote:continue
     corroborating=v.get('corroborating_evidence','')
-    if not isinstance(corroborating,str) or (corroborating.strip() and corroborating.strip() not in text):continue
+    if not isinstance(corroborating,str):continue
+    second=literal_anchor(text,corroborating) if corroborating.strip() else ''
+    if corroborating.strip() and not second:continue
     cls=v.get('classification','narrative_hypothesis')
     if cls not in ('objective_candidate','narrative_hypothesis','interpretive_opinion'):
      cls='narrative_hypothesis'
-    feedback.append({**{k:v[k][:550] for k in ('observation','evidence','impact','action')},
-     'corroborating_evidence':corroborating[:550],'classification':cls})
+    feedback.append({**{k:v[k][:550] for k in ('observation','impact','action')},
+     'evidence':quote[:550],
+     'corroborating_evidence':second[:550],'classification':cls})
   return {'fields':cleaned,'feedback':feedback,'review_mode':review_mode if scope=='critique' else None,
    'diagnostic_counts':{'model_feedback_count':len(result.get('feedback',[])),
                         'grounded_feedback_count':len(feedback)},
