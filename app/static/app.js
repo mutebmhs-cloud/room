@@ -395,7 +395,7 @@ function showCoachFinish(id){
  const session=S.coachData?.sessions?.find(x=>x.id===id);
  if(!session)return;
  modal('<h3>تقييم تطورك بعد التمرين</h3><form id="coachFinishForm">'+
-   '<input type="hidden" name="id" value="'+id+'">'+
+   '<input type="hidden" name="session_id" value="'+id+'">'+
    '<label>تقييمك الذاتي الآن <select required name="after_rating">'+
    [1,2,3,4,5].map(n=>'<option value="'+n+'" '+(n===session.before_rating?'selected':'')+'>'+n+'/5</option>').join('')+
    '</select></label><label>ماذا اكتشفت أو غيرت في طريقة تفكيرك؟'+
@@ -405,7 +405,7 @@ function showCoachFinish(id){
    '<button class="primary">حفظ النتيجة</button></form>');
 }
 async function finishCoachSession(form){
- const id=Number(form.querySelector('[name=id]').value);
+ const id=Number(form.querySelector('[name=session_id]').value);
  const data={after_rating:Number(form.querySelector('[name=after_rating]').value),
    author_reflection:form.querySelector('[name=author_reflection]').value,
    author_notes:form.querySelector('[name=author_notes]').value};
