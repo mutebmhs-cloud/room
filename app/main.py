@@ -455,7 +455,7 @@ async def chat(pid:int,data:ChatRequest,request:Request,user:User=Depends(auth),
                            for v in rows if v.section_id in sections and
                            v.source_hash==fingerprint(section_text(sections[v.section_id]))]
         memory=json.dumps({'facts':valid_facts,'chapter_summaries':current_summaries},ensure_ascii=False)
-        ctx.append('ذاكرة الكاتب المعتمدة، وليست حقائق خارجية:\\n'+memory[:5800])
+        ctx.append('ذاكرة الكاتب المعتمدة، وليست حقائق خارجية:\n'+memory[:5800])
     for sid in set(data.section_ids):
         s=owned_section(db,user,pid,sid)
         ctx.append('مقطع '+s.title+':\n'+ (s.body or '\n'.join(x.get('text','') for x in _json(s.blocks,[])))[:2400])
