@@ -123,13 +123,13 @@ def source_snapshot_status(snapshot,current):
             return 'changed'
     return 'current'
 
-def finding_json(row,current_version=None,current_hash=None,context_status='unknown'):
+def finding_json(row,current_version=None,current_hash=None,context_status='unknown',citations=None):
     local_stale=bool(current_version is not None and
         (current_version!=row.source_version or current_hash!=row.source_hash))
     return {'id':row.id,'section_id':row.section_id,'source_version':row.source_version,
             'observation':row.observation,'evidence':row.evidence,'impact':row.impact,
             'action':row.action,'category':row.category,'state':row.state,
-            'context_status':context_status,
+            'context_status':context_status,'citations':citations or [],
             'stale':local_stale or context_status=='changed'}
 
 
@@ -183,8 +183,15 @@ def findings(pid:int,section_id:int|None=None,user:User=Depends(core.auth),db:Se
         FindingContextSnapshot.project_id==pid,
         FindingContextSnapshot.finding_id.in_([row.id for row in rows]))).all()
     linked={snapshot.finding_id:snapshot for snapshot in snapshots}
+    def citations_for(row):
+        snapshot=linked.get(row.id)
+        references=core._json(snapshot.sources_json,[]) if snapshot else []
+        return [{'section_id':part.get('section_id'),'version':part.get('version'),
+                 'quote':quote} for part in references if isinstance(part,dict)
+                 for quote in part.get('quotes',[]) if isinstance(quote,str)]
     return [finding_json(r,*(current.get(r.section_id) or (None,None)),
-                         source_snapshot_status(linked.get(r.id),current)) for r in rows]
+                         source_snapshot_status(linked.get(r.id),current),citations_for(r))
+            for r in rows]
 
 @router.post('/review')
 async def review(pid:int,data:ReviewRequest,user:User=Depends(core.auth),db:Session=Depends(get_db)):
@@ -216,6 +223,10 @@ async def review(pid:int,data:ReviewRequest,user:User=Depends(core.auth),db:Sess
         # An identical quotation in multiple chapters is ambiguous: do not assign
         # a possibly incorrect source automatically.
         if len(matching)!=1:continue
+        extra=f.get('corroborating_evidence','')
+        if extra and not isinstance(extra,str):continue
+        related=[item for item in context if extra and extra in item['excerpt']]
+        if extra and len(related)!=1:continue
         source=matching[0]
         s=core.owned_section(db,user,pid,source['section_id'])
         current=section_text(s)
@@ -228,13 +239,23 @@ async def review(pid:int,data:ReviewRequest,user:User=Depends(core.auth),db:Sess
             LiteraryFinding.source_hash==source['source_hash'],
             LiteraryFinding.observation==obs))
         if duplicate:created.append(duplicate);continue
+        classification=f.get('classification','narrative_hypothesis')
+        if classification not in ('objective_candidate','narrative_hypothesis','interpretive_opinion'):
+            classification='narrative_hypothesis'
         row=LiteraryFinding(project_id=pid,section_id=s.id,source_version=s.version,
                            source_hash=source['source_hash'],observation=obs[:1200],
                            evidence=evidence[:650],impact=f.get('impact','')[:1200],
-                           action=f.get('action','')[:1200],category='needs_review')
+                           action=f.get('action','')[:1200],category=classification)
         db.add(row);db.flush()
+        references=[]
+        for item in documented_sources:
+            quotes=[]
+            if item['section_id']==source['section_id']:quotes.append(evidence[:650])
+            if extra and item['section_id']==related[0]['section_id']:
+                quotes.append(extra[:650])
+            references.append({**item,'quotes':list(dict.fromkeys(quotes))})
         db.add(FindingContextSnapshot(finding_id=row.id,project_id=pid,
-             sources_json=json.dumps(documented_sources,ensure_ascii=False)))
+             sources_json=json.dumps(references,ensure_ascii=False)))
         created.append(row)
     db.commit()
     return {'findings':[finding_json(r) for r in created],
