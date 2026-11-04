@@ -1,0 +1,48 @@
+name: Verify live writer reading v5
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Verify deployed version, database and anonymous access boundaries
+        run: |
+          python - <<'PY'
+          import json, time, urllib.request, urllib.error
+          base='https://writer-space-pilot-room.onrender.com'
+          def get(path):
+              try:
+                  with urllib.request.urlopen(
+                      urllib.request.Request(base+path,headers={'User-Agent':'writer-v5-smoke'}),
+                      timeout=65) as r:
+                      return r.status,r.read(220000).decode('utf8','replace')
+              except urllib.error.HTTPError as e:
+                  return e.code,e.read(3000).decode('utf8','replace')
+          for _ in range(25):
+              try:
+                  status,html=get('/')
+                  if status==200 and 'writer-reading-v5-20261104-1' in html:break
+              except Exception:pass
+              time.sleep(12)
+          else:raise AssertionError('Current v5 manifest is not live')
+          status,body=get('/health')
+          assert status==200
+          h=json.loads(body)
+          assert h['status']=='ok' and h['durable_storage'] is True and h['pilot_invites'] is True,h
+          print('LIVE_HEALTH', {k:h.get(k) for k in ('status','ai_configured','durable_storage','pilot_invites')})
+          status,js=get('/static/app.js?v=writer-reading-v5-20261104-1')
+          assert status==200 and 'function readingMapPage' in js and 'function inspectEvidence' in js
+          for path in ['/api/auth/me','/api/projects/1/reading-map',
+                       '/api/projects/1/literary/context?section_id=1',
+                       '/api/projects/1/literary/findings',
+                       '/api/projects/1/manuscript/epub']:
+              status,_=get(path)
+              assert status in (401,403),(path,status)
+              print('PRIVATE',path,status)
+          print('READ_ONLY_V5_SMOKE_OK')
+          PY
