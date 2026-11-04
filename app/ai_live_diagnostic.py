@@ -35,6 +35,10 @@ async def evaluate_live_synthetic():
     print("WRITER_AI_LIVE_DIAG started provider="+provider+
           " model="+model+" cases="+str(len(cases)),flush=True)
     success=faults_detected=flagged_clean=failed=0
+    rate_limited=False
+    # Throttle *synthetic* evaluations to avoid exhausting free-provider TPM.
+    delay=max(0,min(30,int(os.getenv('WRITER_AI_EVAL_INTERVAL_SECONDS',
+                                    '12' if len(cases)>3 else '2'))))
     for case in cases:
         try:
             result=await asyncio.wait_for(
@@ -64,13 +68,16 @@ async def evaluate_live_synthetic():
             failed+=1
             print("WRITER_AI_LIVE_DIAG case="+case["id"]+
                   " response_valid=false http_status="+str(error.status_code),flush=True)
+            if error.status_code==429:
+                rate_limited=True
+                break
         except Exception as error:
             failed+=1
             print("WRITER_AI_LIVE_DIAG case="+case["id"]+
                   " response_valid=false error_kind="+type(error).__name__,flush=True)
-        await asyncio.sleep(1)
+        await asyncio.sleep(delay)
     print("WRITER_AI_LIVE_DIAG completed_no_author_content_access"
           " total="+str(len(cases))+" successful="+str(success)+
-          " failed="+str(failed)+" potential_hits="+str(faults_detected)+
+          " failed="+str(failed)+" rate_limited="+str(rate_limited).lower()+" potential_hits="+str(faults_detected)+
           " flagged_clean="+str(flagged_clean)+
           " note=heuristics_not_human_certification",flush=True)
