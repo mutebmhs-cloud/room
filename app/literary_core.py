@@ -51,6 +51,7 @@ class FindingContextSnapshot(Base):
 
 class ReviewRequest(BaseModel):
     section_id:int=Field(gt=0)
+    focus:str=Field(default='',max_length=600)
     allow_ai_processing:bool=False
 
 class FindingUpdate(BaseModel):
@@ -200,13 +201,14 @@ async def review(pid:int,data:ReviewRequest,user:User=Depends(core.auth),db:Sess
     p=core.owned_project(db,user,pid)
     sec=core.owned_section(db,user,pid,data.section_id)
     core.throttle('literary-review:'+str(user.id),limit=8,window=3600)
-    context,total=contextual_sources(db,pid,sec.id)
+    context,total=contextual_sources(db,pid,sec.id,data.focus)
     # Only exact retrieved excerpts are provided. Do not claim full-manuscript review.
     approved=core._json(p.structure,{})
     approved_excerpt=json.dumps(approved,ensure_ascii=False)[:1800]
     facts=db.scalars(select(Fact).where(Fact.project_id==pid).order_by(Fact.id).limit(25)).all()
     documented='\n'.join((f.subject+' — '+f.predicate+': '+f.value)[:220] for f in facts)
     pieces=['راجع من منظور أدبي عربي. تحقق من تناقضات عبر الشواهد المتاحة فقط؛ لا تفترض قراءة بقية العمل.',
+            'سؤال الكاتب المحدد: '+data.focus[:600],
             'قرارات المشروع المعتمدة من الكاتب: '+approved_excerpt,
             'وقائع سجلها الكاتب أو كانت موجودة سابقًا وتحتاج التحقق من المصدر: '+documented[:2600]]
     for item in context:
