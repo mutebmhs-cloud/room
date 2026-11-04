@@ -92,7 +92,7 @@ def create_work(page,kind,label):
         page.locator('[data-block-text="0"]').fill('حوار مصطنع للفحص.')
     else:
         expect(page.locator('#editorBody')).to_be_visible()
-        page.locator('#editorBody').fill('نص مصطنع يخص اختبار '+label)
+        page.locator('#editorBody').fill(('في الصباح ' if kind=='novel' else '')+'نص مصطنع يخص اختبار '+label)
     page.locator('[data-action=save-section]').first.click()
     page.wait_for_timeout(350)
     if kind=='novel':
@@ -219,6 +219,11 @@ def run():
                 expect(w.get_by_text('خريطة قراءة العمل')).to_be_visible(timeout=10000)
                 expect(w.get_by_text('الفصول والإشارات الزمنية')).to_be_visible(timeout=10000)
                 record('private author reading map shows saved manuscript without AI')
+                expect(w.locator('[data-action=search-jump]').first).to_be_visible(timeout=10000)
+                w.locator('[data-action=search-jump]').first.click()
+                expect(w.locator('#editorBody')).to_be_visible(timeout=10000)
+                assert w.locator('#editorBody').evaluate('(el)=>el.selectionStart')==0
+                record('reading map opens exact time-cue position in manuscript')
 
                 # Catalog results remain metadata only; no passage comparison is claimed.
                 def fake_catalog(route):
