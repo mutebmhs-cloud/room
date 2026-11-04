@@ -41,6 +41,14 @@ class LiteraryFinding(Base):
     created_at=Column(DateTime(timezone=True),default=now,nullable=False)
     updated_at=Column(DateTime(timezone=True),default=now,nullable=False)
 
+class FindingContextSnapshot(Base):
+    __tablename__='literary_finding_contexts'
+    id=Column(Integer,primary_key=True)
+    finding_id=Column(Integer,ForeignKey('literary_findings.id',ondelete='CASCADE'),nullable=False,unique=True)
+    project_id=Column(Integer,ForeignKey('projects.id',ondelete='CASCADE'),nullable=False,index=True)
+    sources_json=Column(Text,nullable=False,default='[]')
+    created_at=Column(DateTime(timezone=True),default=now,nullable=False)
+
 class ReviewRequest(BaseModel):
     section_id:int=Field(gt=0)
     allow_ai_processing:bool=False
@@ -102,12 +110,28 @@ def contextual_sources(db,pid,section_id,query='',max_chars=11500):
     return blocks,len(sections)
 
 
-def finding_json(row,current_version=None,current_hash=None):
+def source_snapshot_status(snapshot,current):
+    """Return current/changed/unknown. Never assert validity of an AI claim."""
+    if snapshot is None:return 'unknown'
+    raw=core._json(snapshot.sources_json,[])
+    if not raw:return 'unknown'
+    for source in raw:
+        if not isinstance(source,dict) or source.get('section_id') not in current:
+            return 'changed'
+        version,current_hash=current[source['section_id']]
+        if source.get('version')!=version or source.get('source_hash')!=current_hash:
+            return 'changed'
+    return 'current'
+
+def finding_json(row,current_version=None,current_hash=None,context_status='unknown'):
+    local_stale=bool(current_version is not None and
+        (current_version!=row.source_version or current_hash!=row.source_hash))
     return {'id':row.id,'section_id':row.section_id,'source_version':row.source_version,
             'observation':row.observation,'evidence':row.evidence,'impact':row.impact,
             'action':row.action,'category':row.category,'state':row.state,
-            'stale':bool(current_version is not None and
-                (current_version!=row.source_version or current_hash!=row.source_hash))}
+            'context_status':context_status,
+            'stale':local_stale or context_status=='changed'}
+
 
 @router.get('/context')
 def get_context(pid:int,section_id:int,query:str='',user:User=Depends(core.auth),db:Session=Depends(get_db)):
@@ -155,7 +179,12 @@ def findings(pid:int,section_id:int|None=None,user:User=Depends(core.auth),db:Se
         core.owned_section(db,user,pid,section_id)
         stmt=stmt.where(LiteraryFinding.section_id==section_id)
     rows=db.scalars(stmt.order_by(LiteraryFinding.id.desc()).limit(100)).all()
-    return [finding_json(r,*(current.get(r.section_id) or (None,None))) for r in rows]
+    snapshots=db.scalars(select(FindingContextSnapshot).where(
+        FindingContextSnapshot.project_id==pid,
+        FindingContextSnapshot.finding_id.in_([row.id for row in rows]))).all()
+    linked={snapshot.finding_id:snapshot for snapshot in snapshots}
+    return [finding_json(r,*(current.get(r.section_id) or (None,None)),
+                         source_snapshot_status(linked.get(r.id),current)) for r in rows]
 
 @router.post('/review')
 async def review(pid:int,data:ReviewRequest,user:User=Depends(core.auth),db:Session=Depends(get_db)):
@@ -179,6 +208,8 @@ async def review(pid:int,data:ReviewRequest,user:User=Depends(core.auth),db:Sess
     if len(text)>16000:raise HTTPException(413,'السياق طويل عن الحد الحالي')
     result=await generate_analysis(p.kind,'critique',text)
     created=[]
+    documented_sources=[{'section_id':part['section_id'],'version':part['version'],
+                         'source_hash':part['source_hash']} for part in context]
     for f in result.get('feedback',[])[:6]:
         evidence=f.get('evidence','')
         matching=[item for item in context if evidence and evidence in item['excerpt']]
@@ -201,11 +232,33 @@ async def review(pid:int,data:ReviewRequest,user:User=Depends(core.auth),db:Sess
                            source_hash=source['source_hash'],observation=obs[:1200],
                            evidence=evidence[:650],impact=f.get('impact','')[:1200],
                            action=f.get('action','')[:1200],category='needs_review')
-        db.add(row);created.append(row)
+        db.add(row);db.flush()
+        db.add(FindingContextSnapshot(finding_id=row.id,project_id=pid,
+             sources_json=json.dumps(documented_sources,ensure_ascii=False)))
+        created.append(row)
     db.commit()
     return {'findings':[finding_json(r) for r in created],
             'coverage':'partial','sections_examined':len(context),'total_sections':total,
             'warning':'هذه ملاحظات مرشحة لا أحكامًا نهائية؛ لم تُفحص الرواية كلها بالضرورة'}
+
+@router.get('/findings/{fid}/recheck')
+def recheck_finding(pid:int,fid:int,user:User=Depends(core.auth),db:Session=Depends(get_db)):
+    """Evidence freshness, not automated proof that a literary issue is fixed."""
+    core.owned_project(db,user,pid)
+    finding=db.scalar(select(LiteraryFinding).where(
+        LiteraryFinding.id==fid,LiteraryFinding.project_id==pid))
+    if finding is None:raise HTTPException(404,'الملاحظة غير موجودة')
+    chapters,_=sources(db,pid)
+    current={s.id:(s.version,fingerprint(section_text(s))) for s in chapters}
+    original=next((s for s in chapters if s.id==finding.section_id),None)
+    snapshot=db.scalar(select(FindingContextSnapshot).where(
+        FindingContextSnapshot.project_id==pid,FindingContextSnapshot.finding_id==fid))
+    status=source_snapshot_status(snapshot,current)
+    literal_present=bool(original and finding.evidence in section_text(original))
+    return {'finding_id':fid,'evidence_still_present':literal_present,
+            'context_status':status,'author_state':finding.state,
+            'requires_literary_review':True,
+            'notice':'التحقق آلي من وجود الشاهد وتغيّر المصادر فقط؛ لا يثبت اختفاء المشكلة النقدية أو معالجتها.'}
 
 @router.put('/findings/{fid}')
 def update_finding(pid:int,fid:int,data:FindingUpdate,user:User=Depends(core.auth),db:Session=Depends(get_db)):
