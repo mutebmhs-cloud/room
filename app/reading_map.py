@@ -3,7 +3,6 @@
 All measures are deterministic textual observations. Neither artistic judgments
 nor verified character identities are inferred; no network or model is called.
 """
-from collections import Counter
 import re
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -12,11 +11,10 @@ from .db import get_db
 from .models import User, Section, Fact
 from . import main as core
 from .writer_intelligence import section_text
-from .narrative_retrieval import terms
 
 router=APIRouter(prefix="/api/projects/{pid}/reading-map",tags=["reading-map"])
 
-TIME_CUES=re.compile(r"(?:\b(?:صباحًا|مساءً|ليلًا|ظهرًا|فجرًا|أمس|غدًا|اليوم|البارحة|لاحقًا|سابقًا|بعد|قبل|عندما|حين|خلال|منذ|ثم|أخيرًا)\b|(?:\bفي\b\s+(?:الصباح|المساء|الليل|الظهر|الفجر)))",re.UNICODE)
+TIME_CUES=re.compile(r"(?<!\w)(?:صباحًا|مساءً|ليلًا|ظهرًا|فجرًا|أمس|غدًا|اليوم|البارحة|لاحقًا|سابقًا|بعد|قبل|عندما|حين|خلال|منذ|ثم|أخيرًا|في\s+(?:الصباح|المساء|الليل|الظهر|الفجر))(?!\w)",re.UNICODE)
 
 def word_count(value):
     return len(re.findall(r"[^\W_]+",value,flags=re.UNICODE))
