@@ -117,6 +117,34 @@ def get_context(pid:int,section_id:int,query:str='',user:User=Depends(core.auth)
     return {'sections':blocks,'total_sections':total,'retrieved_sections':len(blocks),
             'coverage':'partial','warning':'الاسترجاع محدود وليس فحصًا شاملًا لجميع الرواية'}
 
+@router.get('/memory')
+def narrative_memory(pid:int,user:User=Depends(core.auth),db:Session=Depends(get_db)):
+    p=core.owned_project(db,user,pid)
+    sections,synopses=sources(db,pid)
+    facts=db.scalars(select(Fact).where(Fact.project_id==pid).order_by(Fact.id)).all()
+    by_id={x.id:x for x in sections}
+    nodes={}
+    for f in facts:
+        key=normalize(f.subject).strip()
+        if key not in nodes:
+            nodes[key]={'name':f.subject,'facts':[]}
+        source=by_id.get(f.section_id)
+        nodes[key]['facts'].append({'predicate':f.predicate,'value':f.value,
+            'section_id':f.section_id,'evidence':f.evidence,
+            'source_current':bool(source and f.source_version==source.version)
+                if f.evidence else f.evidence_status=='manual',
+            'status':f.evidence_status})
+    timeline=[]
+    for sec in sections:
+        item=synopses.get(sec.id)
+        current=bool(item and item.source_hash==fingerprint(section_text(sec)))
+        timeline.append({'section_id':sec.id,'title':sec.title,'position':sec.position,
+                         'summary':item.summary if current else '',
+                         'summary_current':current})
+    return {'entities':list(nodes.values()),'timeline':timeline,
+            'approved_structure':core._json(p.structure,{}),
+            'note':'الذاكرة تجمع ما أدخله الكاتب وما اعتمده. عدم وجود معلومة لا يثبت أنها غير موجودة في المخطوط.'}
+
 @router.get('/findings')
 def findings(pid:int,section_id:int|None=None,user:User=Depends(core.auth),db:Session=Depends(get_db)):
     core.owned_project(db,user,pid)
@@ -138,7 +166,13 @@ async def review(pid:int,data:ReviewRequest,user:User=Depends(core.auth),db:Sess
     core.throttle('literary-review:'+str(user.id),limit=8,window=3600)
     context,total=contextual_sources(db,pid,sec.id)
     # Only exact retrieved excerpts are provided. Do not claim full-manuscript review.
-    pieces=['راجع من منظور أدبي عربي. تحقق من تناقضات عبر الشواهد المتاحة فقط؛ لا تفترض قراءة بقية العمل.']
+    approved=core._json(p.structure,{})
+    approved_excerpt=json.dumps(approved,ensure_ascii=False)[:1800]
+    facts=db.scalars(select(Fact).where(Fact.project_id==pid).order_by(Fact.id).limit(25)).all()
+    documented='\n'.join((f.subject+' — '+f.predicate+': '+f.value)[:220] for f in facts)
+    pieces=['راجع من منظور أدبي عربي. تحقق من تناقضات عبر الشواهد المتاحة فقط؛ لا تفترض قراءة بقية العمل.',
+            'قرارات المشروع المعتمدة من الكاتب: '+approved_excerpt,
+            'وقائع سجلها الكاتب أو كانت موجودة سابقًا وتحتاج التحقق من المصدر: '+documented[:2600]]
     for item in context:
         pieces.append('الفصل '+item['section_title']+' [رقم '+str(item['section_id'])+', إصدار '+str(item['version'])+']:\n'+item['excerpt'])
     text='\n\n'.join(pieces)
