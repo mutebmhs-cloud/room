@@ -655,3 +655,7 @@ from .literary_core import router as literary_router
 app.include_router(literary_router)
 from .manuscript_interchange import router as manuscript_router
 app.include_router(manuscript_router)
+from .writing_coach import router as coach_router
+app.include_router(coach_router)
+from .epub_export import router as epub_router
+app.include_router(epub_router)
