@@ -4,6 +4,7 @@ No unlicensed full-text library, no automatic disclosure of manuscripts, and no
 unattested claims of literary quality. All project endpoints require auth.
 """
 from datetime import datetime
+from typing import Literal
 import hashlib
 import json
 import re
@@ -52,6 +53,7 @@ class FindingContextSnapshot(Base):
 class ReviewRequest(BaseModel):
     section_id:int=Field(gt=0)
     focus:str=Field(default='',max_length=600)
+    mode:Literal['comprehensive','developmental','style','language','continuity','cultural']='comprehensive'
     allow_ai_processing:bool=False
 
 class FindingUpdate(BaseModel):
@@ -215,7 +217,10 @@ async def review(pid:int,data:ReviewRequest,user:User=Depends(core.auth),db:Sess
         pieces.append('الفصل '+item['section_title']+' [رقم '+str(item['section_id'])+', إصدار '+str(item['version'])+']:\n'+item['excerpt'])
     text='\n\n'.join(pieces)
     if len(text)>16000:raise HTTPException(413,'السياق طويل عن الحد الحالي')
-    result=await generate_analysis(p.kind,'critique',text)
+    if data.mode=='comprehensive':
+        result=await generate_analysis(p.kind,'critique',text)
+    else:
+        result=await generate_analysis(p.kind,'critique',text,review_mode=data.mode)
     created=[]
     documented_sources=[{'section_id':part['section_id'],'version':part['version'],
                          'source_hash':part['source_hash']} for part in context]
@@ -261,7 +266,7 @@ async def review(pid:int,data:ReviewRequest,user:User=Depends(core.auth),db:Sess
         created.append(row)
     db.commit()
     return {'findings':[finding_json(r) for r in created],
-            'coverage':'partial','sections_examined':len(context),'total_sections':total,
+            'review_mode':data.mode,'coverage':'partial','sections_examined':len(context),'total_sections':total,
             'warning':'هذه ملاحظات مرشحة لا أحكامًا نهائية؛ لم تُفحص الرواية كلها بالضرورة'}
 
 @router.get('/findings/{fid}/recheck')

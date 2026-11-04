@@ -417,6 +417,7 @@ class ChatRequest(BaseModel):
     message:str=Field(min_length=2,max_length=4000)
     share_scratchpad:bool=False
     share_structure:bool=False
+    share_memory:bool=False
     section_ids:list[int]=Field(default_factory=list,max_length=3)
     share_history:bool=False
 
@@ -438,6 +439,23 @@ async def chat(pid:int,data:ChatRequest,request:Request,user:User=Depends(auth),
     ctx=[]
     if data.share_scratchpad: ctx.append('أفكار حرّة:\n'+p.scratchpad[:4000])
     if data.share_structure: ctx.append('بيانات منظمة:\n'+p.structure[:3000])
+    if data.share_memory:
+        # Only currently valid author-entered facts and author-reviewed chapter summaries
+        # are shared, and only on a writer's explicit opt-in for this single request.
+        from .writer_intelligence import SectionSynopsis, section_text, fingerprint
+        sections={s.id:s for s in db.scalars(select(Section).where(Section.project_id==pid)).all()}
+        facts=db.scalars(select(Fact).where(Fact.project_id==pid).order_by(Fact.id.desc()).limit(40)).all()
+        valid_facts=[{'subject':f.subject,'predicate':f.predicate,'value':f.value,
+                      'source':('quoted' if f.evidence else 'author-entered')}
+                     for f in facts if (not f.evidence or
+                     (f.section_id in sections and f.source_version==sections[f.section_id].version))]
+        rows=db.scalars(select(SectionSynopsis).where(SectionSynopsis.project_id==pid).limit(25)).all()
+        current_summaries=[{'chapter':sections[v.section_id].title,'summary':v.summary,
+                            'central_event':v.central_event,'character_change':v.character_change}
+                           for v in rows if v.section_id in sections and
+                           v.source_hash==fingerprint(section_text(sections[v.section_id]))]
+        memory=json.dumps({'facts':valid_facts,'chapter_summaries':current_summaries},ensure_ascii=False)
+        ctx.append('ذاكرة الكاتب المعتمدة، وليست حقائق خارجية:\n'+memory[:5800])
     for sid in set(data.section_ids):
         s=owned_section(db,user,pid,sid)
         ctx.append('مقطع '+s.title+':\n'+ (s.body or '\n'.join(x.get('text','') for x in _json(s.blocks,[])))[:2400])
