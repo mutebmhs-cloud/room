@@ -75,6 +75,9 @@ def import_docx(pid:int,data:DocxImport,user:User=Depends(core.auth),db:Session=
         for paragraph in doc.paragraphs:
             txt=paragraph.text
             if len(txt)>12000:raise ValueError('long paragraph')
+            # The cover/title paragraph is metadata, not an extra manuscript chapter.
+            if paragraph.style and paragraph.style.name.lower()=='title' and not entries and not lines:
+                continue
             is_heading=paragraph.style and paragraph.style.name.lower().startswith(('heading 1','title 1','العنوان 1'))
             if is_heading and txt.strip():
                 if lines:entries.append((heading,'\n'.join(lines)));lines=[]
