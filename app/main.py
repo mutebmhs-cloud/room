@@ -15,6 +15,7 @@ from .db import Base, engine, get_db, SessionLocal
 from .models import User, Invite, RecoveryCode, Session as LoginSession, Project, Section, Revision, Fact, Chat, now
 from .security import hash_password, digest, secure_random, pw_valid, verify, require_csrf, COOKIE_NAME, SESSION_DAYS, IS_PROD, csrf_for_session
 from .ai import analyze
+from .provider_gateway import configured as ai_configured
 import unicodedata
 from .fountain import parse as parse_fountain, FountainError
 
@@ -89,7 +90,7 @@ def robots(): return PlainTextResponse('User-agent: *\nDisallow: /\n')
 @app.get('/health')
 def health(db:OrmSession=Depends(get_db)):
     db.execute(text('SELECT 1'))
-    return {'status':'ok','ai_configured':bool(os.getenv('OPENAI_API_KEY')) and os.getenv('PILOT_EPHEMERAL')!='1', 'ephemeral':engine.dialect.name=='sqlite','durable_storage':engine.dialect.name=='postgresql','pilot_invites':os.getenv('PILOT_INVITE_MODE')=='1'}
+    return {'status':'ok','ai_configured':ai_configured(), 'ephemeral':engine.dialect.name=='sqlite','durable_storage':engine.dialect.name=='postgresql','pilot_invites':os.getenv('PILOT_INVITE_MODE')=='1'}
 
 _attempts={}
 def throttle(key, limit=9, window=900):
@@ -216,7 +217,7 @@ def me(request:Request,db:OrmSession=Depends(get_db)):
     csrf=csrf_for_session(request.cookies.get(COOKIE_NAME,''))
     from .pilot import pilot_entry
     entry=pilot_entry(db,user)
-    return {'email':user.email,'display_name':entry.display_name if entry else None,'username':entry.username if entry else None,'role':entry.role if entry else 'writer', 'pilot':bool(entry), 'csrf':csrf,'ai_available':bool(os.getenv('OPENAI_API_KEY')) and os.getenv('PILOT_EPHEMERAL')!='1'}
+    return {'email':user.email,'display_name':entry.display_name if entry else None,'username':entry.username if entry else None,'role':entry.role if entry else 'writer', 'pilot':bool(entry), 'csrf':csrf,'ai_available':ai_configured()}
 
 @app.post('/api/auth/logout')
 def logout(request:Request,response:Response,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
@@ -434,8 +435,10 @@ async def chat(pid:int,data:ChatRequest,request:Request,user:User=Depends(auth),
 def export_project(pid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)):
     p=owned_project(db,user,pid)
     from .writer_intelligence import SectionSynopsis, progress_json
+    from .literary_core import LiteraryFinding
     sections=db.scalars(select(Section).where(Section.project_id==pid).order_by(Section.position,Section.id)).all()
     synopses=db.scalars(select(SectionSynopsis).where(SectionSynopsis.project_id==pid)).all()
+    literary=db.scalars(select(LiteraryFinding).where(LiteraryFinding.project_id==pid)).all()
     return {'format':'writer-cloud-v2','project':{**proj_json(p),'kind':p.kind},
             'sections':[sec_json(x) for x in sections],
             'facts':[fact_json(x,{s.id:s.version for s in sections}) for x in db.scalars(select(Fact).where(Fact.project_id==pid))],
@@ -445,7 +448,11 @@ def export_project(pid:int,user:User=Depends(auth),db:OrmSession=Depends(get_db)
             'synopses':[{'section_id':x.section_id,'summary':x.summary,'central_event':x.central_event,
                          'character_change':x.character_change,'open_question':x.open_question,
                          'source_hash':x.source_hash,'origin':x.origin} for x in synopses],
-            'progress':progress_json(db,pid)}
+            'progress':progress_json(db,pid),
+            'literary_findings':[{'section_id':x.section_id,'source_version':x.source_version,
+                'source_hash':x.source_hash,'observation':x.observation,'evidence':x.evidence,
+                'impact':x.impact,'action':x.action,'category':x.category,'state':x.state}
+                for x in literary]}
 
 class ImportData(BaseModel):
     model_config=ConfigDict(extra='forbid')
@@ -460,7 +467,8 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
     chats=raw.get('chats',[]) if fmt=='writer-cloud-v2' else []
     synopses=raw.get('synopses',[]) if fmt=='writer-cloud-v2' else []
     progress=raw.get('progress',None) if fmt=='writer-cloud-v2' else None
-    if not isinstance(revs,list) or len(revs)>10000 or not isinstance(chats,list) or len(chats)>3000 or not isinstance(synopses,list) or len(synopses)>400: raise HTTPException(422,'عدد سجلات النسخة الاحتياطية غير صالح')
+    literary_findings=raw.get('literary_findings',[]) if fmt=='writer-cloud-v2' else []
+    if not isinstance(revs,list) or len(revs)>10000 or not isinstance(chats,list) or len(chats)>3000 or not isinstance(synopses,list) or len(synopses)>400 or not isinstance(literary_findings,list) or len(literary_findings)>1000: raise HTTPException(422,'عدد سجلات النسخة الاحتياطية غير صالح')
     if len(json.dumps(raw,ensure_ascii=False).encode('utf-8'))>30_000_000: raise HTTPException(413,'النسخة الاحتياطية كبيرة جدًا')
     proj=raw['project']; kind=proj.get('kind')
     if kind not in KINDS or not isinstance(proj.get('title'),str) or not (1<=len(proj['title'])<=240) or not proj['title'].strip() or len(raw['sections'])>400 or len(raw['facts'])>3000: raise HTTPException(422,'بيانات المشروع غير صالحة')
@@ -505,6 +513,16 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
                progress.get('section_id') is not None and progress['section_id'] not in version_map or
                type(progress.get('cursor_offset',0)) is not int or not 0<=progress.get('cursor_offset',0)<=450000):
                 raise ValueError('progress')
+        for item in literary_findings:
+            if not isinstance(item,dict) or item.get('section_id') not in version_map:
+                raise ValueError('literary finding source')
+            if type(item.get('source_version')) is not int or not 1<=item['source_version']<=version_map[item['section_id']]:
+                raise ValueError('literary finding version')
+            for key,limit in [('source_hash',64),('observation',1200),('evidence',650),('impact',1200),('action',1200),('category',32),('state',20)]:
+                if not isinstance(item.get(key),str) or len(item[key])>limit:
+                    raise ValueError('literary finding field')
+            if item['state'] not in ('open','discussed','accepted','dismissed','resolved'):
+                raise ValueError('literary finding state')
         for msg in chats:
             if not isinstance(msg,dict) or msg.get('role') not in ('user','assistant') or not isinstance(msg.get('text'),str) or len(msg['text'])>6000 or not isinstance(msg.get('proposals'),list) or len(json.dumps(msg['proposals'],ensure_ascii=False))>12000: raise ValueError('chat')
         for f in raw['facts']:
@@ -549,6 +567,13 @@ def import_project(request:ImportData,user:User=Depends(auth),db:OrmSession=Depe
             db.add(WriterProgress(project_id=pp.id,user_id=user.id,
                 section_id=old_map.get(progress.get('section_id')),
                 tab=progress['tab'],cursor_offset=progress.get('cursor_offset',0)))
+        from .literary_core import LiteraryFinding
+        for finding in literary_findings:
+            db.add(LiteraryFinding(project_id=pp.id,section_id=old_map[finding['section_id']],
+                source_version=finding['source_version'],source_hash=finding['source_hash'],
+                observation=finding['observation'],evidence=finding['evidence'],
+                impact=finding['impact'],action=finding['action'],category=finding['category'],
+                state=finding['state']))
         for msg in chats:
             db.add(Chat(project_id=pp.id,role=msg['role'],text=msg['text'],proposals=json.dumps(msg['proposals'],ensure_ascii=False)))
         for f in raw['facts']:
@@ -626,3 +651,7 @@ from .pilot import router as pilot_router
 app.include_router(pilot_router)
 from .writer_intelligence import router as intelligence_router
 app.include_router(intelligence_router)
+from .literary_core import router as literary_router
+app.include_router(literary_router)
+from .manuscript_interchange import router as manuscript_router
+app.include_router(manuscript_router)

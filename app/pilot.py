@@ -94,7 +94,7 @@ def bootstrap_pilot():
 
 @router.get('/status')
 def pilot_status():
-    return {'invite_mode':PILOT_MODE,'ai_ready':bool(os.getenv('OPENAI_API_KEY')) and os.getenv('PILOT_EPHEMERAL')!='1','durable_storage':core.engine.dialect.name=='postgresql','admin_review_disclosure':True}
+    return {'invite_mode':PILOT_MODE,'ai_ready':core.ai_configured(),'durable_storage':core.engine.dialect.name=='postgresql','admin_review_disclosure':True}
 
 @router.post('/login')
 def login_pilot(data:PilotLogin,request:Request,response:Response,db:Session=Depends(get_db)):
