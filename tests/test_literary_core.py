@@ -124,7 +124,7 @@ def test_word_export_and_nondestructive_import():
         result=request(w,csrf,'POST',f'/api/projects/{pid}/manuscript/docx/import',{
             'filename':'story.docx','content_base64':base64.b64encode(exported.content).decode()})
         assert result.status_code==200,result.text
-        assert result.json()['added_sections']>=1
+        assert result.json()['added_sections']==1, 'Word roundtrip must not create phantom cover chapter'
         all_sections=w.get(f'/api/projects/{pid}').json()['sections']
         assert len(all_sections)>=2 and any('أحب سامر' in s['body'] for s in all_sections)
         assert request(w,csrf,'POST',f'/api/projects/{pid}/manuscript/docx/import',{
