@@ -39,11 +39,11 @@ jobs:
           assert health.get('pilot_invites') is True
           print('V4_HEALTH', {k:health.get(k) for k in ('status','durable_storage','pilot_invites','ai_configured')})
           status,js=fetch('/static/app.js?v=writer-narrative-v4-20261104-1')
-          assert status==200 and 'function literaryPage' in js and 'function coachTrackingPage' in js and 'function exportEpub' in js and 'function researchPage' in js and 'function showNarrativeMemory' in js
+          assert status==200 and 'function literaryPage' in js and 'function coachTrackingPage' in js and 'function exportEpub' in js and 'function searchWriterManuscript' in js and 'function researchPage' in js and 'function showNarrativeMemory' in js
           print('V4_WRITER_INTERFACE_OK')
           for endpoint in ['/api/auth/me','/api/projects/catalog','/api/projects/1/literary/memory',
                            '/api/projects/1/literary/findings','/api/projects/1/manuscript/docx',
-                           '/api/projects/1/manuscript/epub','/api/projects/1/coach']:
+                           '/api/projects/1/manuscript/epub','/api/projects/1/coach','/api/projects/1/manuscript-tools/milestones']:
               code,_=fetch(endpoint)
               assert code in (401,403), (endpoint,code)
               print('SECURE_API',endpoint,code)
