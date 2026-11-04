@@ -1,0 +1,50 @@
+name: Verify live writer literary v3
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live-v3:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Validate live deployment without real accounts or manuscripts
+        run: |
+          python - <<'PY'
+          import json,time,urllib.request,urllib.error
+          base='https://writer-space-pilot-room.onrender.com'
+          def fetch(path):
+              req=urllib.request.Request(base+path,headers={'User-Agent':'writer-literary-v3-live-smoke'})
+              try:
+                  with urllib.request.urlopen(req,timeout=70) as r:
+                      return r.status,r.read(300000).decode('utf-8','replace')
+              except urllib.error.HTTPError as e:
+                  return e.code,e.read(2000).decode('utf-8','replace')
+          for attempt in range(20):
+              try:
+                  status,html=fetch('/')
+                  if status==200 and 'writer-literary-v3-20261104-1' in html:
+                      break
+              except Exception:
+                  pass
+              time.sleep(12)
+          else:
+              raise AssertionError('v3 static manifest not deployed within polling window')
+          status,health_body=fetch('/health')
+          assert status==200,(status,health_body[:500])
+          health=json.loads(health_body)
+          assert health.get('status')=='ok' and health.get('durable_storage') is True
+          assert health.get('pilot_invites') is True
+          print('V3_HEALTH', {k:health.get(k) for k in ('status','durable_storage','pilot_invites','ai_configured')})
+          status,js=fetch('/static/app.js?v=writer-literary-v3-20261104-1')
+          assert status==200 and 'function literaryPage' in js and 'function researchPage' in js and 'function showNarrativeMemory' in js
+          print('V3_WRITER_INTERFACE_OK')
+          for endpoint in ['/api/auth/me','/api/projects/catalog','/api/projects/1/literary/memory',
+                           '/api/projects/1/literary/findings','/api/projects/1/manuscript/docx']:
+              code,_=fetch(endpoint)
+              assert code in (401,403), (endpoint,code)
+              print('SECURE_API',endpoint,code)
+          print('LIVE_V3_CONFIRMED read-only; no real accounts or projects created')
+          PY
