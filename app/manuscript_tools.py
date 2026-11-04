@@ -69,8 +69,8 @@ def compare_section_revisions(
         if tag=='equal':continue
         differences.append({
             'change':tag,
-            'before':'\\n'.join(old[i1:i2])[:1100],
-            'after':'\\n'.join(new[j1:j2])[:1100],
+            'before':'\n'.join(old[i1:i2])[:1100],
+            'after':'\n'.join(new[j1:j2])[:1100],
             'old_line':i1+1,'new_line':j1+1})
     return {
       'section_id':section_id,'source_version':baseline.version,
