@@ -259,7 +259,7 @@ function literaryPage(){
  <h3>مراجعة أدبية مسندة بالنص</h3>
  <p>اختر فصلًا من «المخطوط» أولًا. عند طلب المراجعة، يختبر المساعد سياقًا من الفصول المتصلة ويعرض شواهده. قد لا تشمل المراجعة الرواية كاملة.</p>
  <p class="hint">${chosen?'الفصل المختار: '+esc(chosen.title):'لم يختر فصل بعد'}</p>
- <label>سؤال أو محور النقد (اختياري)<input id="reviewFocus" maxlength="600" placeholder="مثال: هل انتقل المفتاح بين الشخصيات بصورة منطقية؟"></label>
+ <label>نوع المراجعة المهنية<select id="reviewMode"><option value="comprehensive">مراجعة شاملة</option><option value="developmental">تحرير تطويري: الحبكة والدوافع</option><option value="style">تحرير أسلوبي: الإيقاع والصوت</option><option value="language">مراجعة لغوية: الوضوح والنحو</option><option value="continuity">تدقيق الاستمرارية: الزمن والمعرفة</option><option value="cultural">مراجعة السياق الثقافي</option></select></label><label>سؤال أو محور النقد (اختياري)<input id="reviewFocus" maxlength="600" placeholder="مثال: هل انتقل المفتاح بين الشخصيات بصورة منطقية؟"></label>
  <button class="primary" data-action="literary-review" ${chosen?'':'disabled'}>مراجعة الفصل والسياق</button><button class="soft-btn" data-action="inspect-evidence">معاينة الشواهد دون ذكاء اصطناعي</button><button class="soft-btn" data-action="show-narrative-memory">ذاكرة الشخصيات والأحداث</button>
  <p class="hint">${S.intel?.ai_available?'ستحتاج إلى الموافقة الصريحة قبل إرسال النصوص المسترجعة.':'الذكاء الاصطناعي غير متصل؛ يمكنك متابعة الكتابة والتدقيق اليدوي.'}</p>
  </div><h3>دفتر الملاحظات الأدبية</h3>${rows||'<div class="card">لم تُسجل ملاحظات أدبية بعد. لا يعني ذلك إثبات خلو المخطوط من المشكلات.</div>'}</div>
@@ -287,7 +287,7 @@ async function runLiteraryReview(){
  setStatus('تجري مراجعة الشواهد...');
  try{
   const out=await api('/projects/'+S.pid+'/literary/review',{method:'POST',
-   body:JSON.stringify({section_id:S.sid,focus:($('#reviewFocus')?.value||'').trim(),allow_ai_processing:true})});
+   body:JSON.stringify({section_id:S.sid,focus:($('#reviewFocus')?.value||'').trim(),mode:($('#reviewMode')?.value||'comprehensive'),allow_ai_processing:true})});
   await refreshLiterary();
   toast(out.findings.length?'أضيفت ملاحظات للمراجعة':'لم تصدر ملاحظات مسندة من التحليل الحالي');
  }catch(error){toast(error.message)}
