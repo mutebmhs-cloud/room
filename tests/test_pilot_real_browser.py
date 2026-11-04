@@ -209,6 +209,11 @@ def run():
                 w.locator('[data-action=literary-review]').first.click()
                 expect(w.locator('#toast')).to_contain_text('الذكاء غير متصل')
                 record('literary review safely explains offline AI and shows author memory')
+                w.locator('[data-tab=reading]').first.click()
+                expect(w.get_by_text('خريطة قراءة العمل')).to_be_visible(timeout=10000)
+                expect(w.get_by_text('الفصول والإشارات الزمنية')).to_be_visible(timeout=10000)
+                record('private author reading map shows saved manuscript without AI')
+
                 # Catalog results remain metadata only; no passage comparison is claimed.
                 def fake_catalog(route):
                     route.fulfill(status=200,content_type='application/json',
